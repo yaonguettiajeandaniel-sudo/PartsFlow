@@ -1,0 +1,2347 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PartsFlow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --ground:#F2F3F5;
+    --surface:#FFFFFF;
+    --surface-2:#E9ECEF;
+    --ink:#1B222C;
+    --ink-muted:#5B6572;
+    --ink-faint:#8A93A0;
+    --line:#D7DBE0;
+    --line-strong:#B9C0C8;
+    --accent:#1259A6;
+    --accent-ink:#0B3D80;
+    --accent-soft:#E3EDF9;
+    --amber:#B9660A;
+    --amber-soft:#FCEED4;
+    --danger:#C22F17;
+    --danger-soft:#FAE3DE;
+    --good:#1C7A4F;
+    --good-soft:#DFF1E7;
+    --teal:#0E7C86;
+    --teal-soft:#DEF0F1;
+    --faint-soft:#EEF0F2;
+    --shadow: 0 1px 2px rgba(27,34,44,0.07), 0 8px 20px rgba(27,34,44,0.06);
+    --radius: 3px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#12161B; --surface:#1B2129; --surface-2:#232A33;
+      --ink:#E8EAED; --ink-muted:#9BA5B0; --ink-faint:#6E7883;
+      --line:#323B45; --line-strong:#414C58;
+      --accent:#5FA0E8; --accent-ink:#BFDBFF; --accent-soft:#1E2C3D;
+      --amber:#F0AC4E; --amber-soft:#3A2A0B;
+      --danger:#F08066; --danger-soft:#3F221C;
+      --good:#5FD69B; --good-soft:#14281F; --teal:#4FC2CC; --teal-soft:#123236; --faint-soft:#232A33;
+      --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#12161B; --surface:#1B2129; --surface-2:#232A33;
+    --ink:#E8EAED; --ink-muted:#9BA5B0; --ink-faint:#6E7883;
+    --line:#323B45; --line-strong:#414C58;
+    --accent:#5FA0E8; --accent-ink:#BFDBFF; --accent-soft:#1E2C3D;
+    --amber:#F0AC4E; --amber-soft:#3A2A0B;
+    --danger:#F08066; --danger-soft:#3F221C;
+    --good:#5FD69B; --good-soft:#14281F; --teal:#4FC2CC; --teal-soft:#123236; --faint-soft:#232A33;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    font-size:14.5px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{font-family:'Big Shoulders', 'Arial Narrow', sans-serif; text-transform:uppercase; letter-spacing:0.02em; text-wrap:balance; margin:0; color:var(--ink);}
+  .mono, .num, td.num, input, select, textarea, button{font-family:'IBM Plex Sans', system-ui, sans-serif;}
+  .mono, .num, td.num{font-family:'IBM Plex Mono', ui-monospace, monospace;}
+  a{color:var(--accent);}
+  button{cursor:pointer; font-size:0.9rem;}
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  input,select,textarea{
+    font-size:0.9rem; padding:7px 9px; border:1px solid var(--line-strong); border-radius:var(--radius);
+    background:var(--surface); color:var(--ink); width:100%;
+  }
+  label{display:block; font-size:0.72rem; letter-spacing:0.05em; text-transform:uppercase; color:var(--ink-muted); margin-bottom:4px;}
+  .field{margin-bottom:14px;}
+  .field-row{display:grid; gap:12px;}
+
+  /* ---- app shell ---- */
+  #app{display:grid; grid-template-columns:230px 1fr; min-height:100vh;}
+  @media (max-width:860px){ #app{grid-template-columns:1fr;} .sidebar{position:static !important; height:auto !important;} }
+  .sidebar{
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+    background:var(--surface); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:18px 0 14px;
+  }
+  .brand{display:flex; align-items:baseline; gap:8px; padding:0 18px 4px;}
+  .brand .mark{width:9px;height:9px;background:var(--accent);display:inline-block;transform:rotate(45deg);flex:none;}
+  .brand span{font-family:'Big Shoulders'; font-weight:800; font-size:1.25rem;}
+  .brand-sub{padding:0 18px 16px; font-size:0.68rem; color:var(--ink-faint); letter-spacing:0.08em; text-transform:uppercase; border-bottom:1px solid var(--line); margin-bottom:8px;}
+  nav.mainnav{display:flex; flex-direction:column; gap:1px; padding:0 8px;}
+  nav.mainnav button{
+    display:flex; align-items:center; gap:10px; text-align:left; width:100%;
+    background:none; border:none; padding:9px 10px; border-radius:var(--radius);
+    color:var(--ink-muted); font-size:0.86rem; font-weight:500;
+  }
+  nav.mainnav button:hover{background:var(--faint-soft); color:var(--ink);}
+  nav.mainnav button.active{background:var(--accent-soft); color:var(--accent-ink); font-weight:600;}
+  .nav-ico{width:16px; text-align:center; font-family:'IBM Plex Mono'; font-size:0.78rem; color:var(--ink-faint); flex:none;}
+  nav.mainnav button.active .nav-ico{color:var(--accent);}
+  .sidebar-foot{margin-top:auto; padding:14px 18px 0; border-top:1px solid var(--line); font-size:0.72rem; color:var(--ink-faint);}
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    padding:14px 26px; border-bottom:1px solid var(--line); background:var(--surface);
+    position:sticky; top:0; z-index:5;
+  }
+  .topbar h1{font-size:1.15rem; font-weight:700;}
+  .actingas{display:flex; align-items:center; gap:8px; font-size:0.8rem; color:var(--ink-muted);}
+  .actingas select{width:auto; min-width:220px; padding:6px 8px; font-size:0.82rem;}
+
+  main.view{padding:24px 26px 80px; max-width:1180px;}
+  .view-head{display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom:18px; flex-wrap:wrap;}
+  .view-head .lede{color:var(--ink-muted); font-size:0.88rem; max-width:60ch; margin-top:4px;}
+  .btn{
+    display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line-strong);
+    background:var(--surface); color:var(--ink); padding:8px 14px; border-radius:var(--radius);
+    font-weight:600; font-size:0.84rem; white-space:nowrap;
+  }
+  .btn:hover{border-color:var(--ink-faint);}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn.primary:hover{background:var(--accent-ink); border-color:var(--accent-ink);}
+  .btn.danger{background:var(--surface); border-color:var(--danger); color:var(--danger);}
+  .btn.danger:hover{background:var(--danger-soft);}
+  .btn.ghost{border-color:transparent; background:none;}
+  .btn.ghost:hover{background:var(--faint-soft);}
+  .btn.small{padding:5px 10px; font-size:0.76rem;}
+  .btn[disabled]{opacity:0.45; cursor:not-allowed;}
+  .toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px;}
+  .toolbar input[type=search], .toolbar input[type=text], .toolbar select{width:auto; min-width:180px;}
+
+  .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin-bottom:26px;}
+  .kpi{background:var(--surface); padding:16px 18px;}
+  .kpi .lbl{font-size:0.68rem; letter-spacing:0.07em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:8px;}
+  .kpi .val{font-family:'Big Shoulders'; font-weight:800; font-size:1.9rem; line-height:1;}
+  .kpi .val.danger{color:var(--danger);}
+  .kpi .val.amber{color:var(--amber);}
+  .kpi .sub{font-size:0.76rem; color:var(--ink-muted); margin-top:4px;}
+
+  .card{background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); padding:18px 20px; margin-bottom:20px;}
+  .card h3{font-size:1.02rem; margin-bottom:14px;}
+
+  .table-wrap{overflow-x:auto; border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); margin-bottom:20px;}
+  table.grid{border-collapse:collapse; width:100%; min-width:520px; background:var(--surface); font-size:0.86rem;}
+  table.grid thead th{
+    background:var(--surface-2); text-align:left; padding:9px 12px; border-bottom:1px solid var(--line);
+    font-size:0.68rem; letter-spacing:0.06em; text-transform:uppercase; color:var(--ink-muted); font-weight:600; white-space:nowrap;
+  }
+  table.grid td{padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  table.grid tbody tr:last-child td{border-bottom:none;}
+  table.grid tbody tr.clickable{cursor:pointer;}
+  table.grid tbody tr.clickable:hover{background:var(--faint-soft);}
+  td.num, th.num{text-align:right; font-variant-numeric:tabular-nums;}
+  .empty-row td{color:var(--ink-faint); text-align:center; padding:26px; font-style:normal;}
+
+  .pill{display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:100px; font-size:0.72rem; font-weight:600; letter-spacing:0.02em; white-space:nowrap;}
+  .pill::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor;}
+  .pill.impayee{background:var(--danger-soft); color:var(--danger);}
+  .pill.partielle{background:var(--amber-soft); color:var(--amber);}
+  .pill.payee{background:var(--good-soft); color:var(--good);}
+  .pill.annulee{background:var(--faint-soft); color:var(--ink-faint);}
+  .pill.brouillon{background:var(--faint-soft); color:var(--ink-muted);}
+  .pill.envoye, .pill.envoyee{background:var(--accent-soft); color:var(--accent-ink);}
+  .pill.accepte, .pill.ouvert, .pill.actif{background:var(--good-soft); color:var(--good);}
+  .pill.refuse, .pill.immobilise{background:var(--danger-soft); color:var(--danger);}
+  .pill.cloture, .pill.soldee{background:var(--faint-soft); color:var(--ink-muted);}
+
+  .badge-low{background:var(--danger-soft); color:var(--danger); padding:1px 7px; border-radius:100px; font-size:0.7rem; font-weight:700;}
+
+  /* modal */
+  .modal-back{position:fixed; inset:0; background:rgba(18,22,27,0.45); display:flex; align-items:flex-start; justify-content:center; padding:5vh 16px; overflow-y:auto; z-index:50;}
+  .modal{background:var(--surface); border-radius:var(--radius); box-shadow:0 20px 60px rgba(0,0,0,0.3); width:100%; max-width:640px; border:1px solid var(--line);}
+  .modal.wide{max-width:860px;}
+  .modal-head{display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--line);}
+  .modal-head h3{font-size:1.05rem;}
+  .modal-body{padding:20px; max-height:70vh; overflow-y:auto;}
+  .modal-foot{display:flex; justify-content:flex-end; gap:10px; padding:14px 20px; border-top:1px solid var(--line);}
+  .modal-close{background:none; border:none; font-size:1.3rem; line-height:1; color:var(--ink-faint); padding:2px 6px;}
+  .modal-close:hover{color:var(--ink);}
+
+  .lines-table{width:100%; border-collapse:collapse; margin-bottom:10px;}
+  .lines-table th{font-size:0.66rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); text-align:left; padding:4px 6px;}
+  .lines-table td{padding:4px 6px; vertical-align:middle;}
+  .lines-table input, .lines-table select{padding:5px 7px; font-size:0.82rem;}
+  .lines-total{display:flex; justify-content:flex-end; gap:20px; padding-top:10px; border-top:1px solid var(--line); font-size:0.95rem;}
+  .lines-total b{font-family:'IBM Plex Mono';}
+
+  .callout{display:grid; grid-template-columns:auto 1fr; gap:10px; padding:12px 14px; border:1px solid var(--line); border-left:3px solid var(--accent); background:var(--accent-soft); font-size:0.85rem; margin-bottom:16px; border-radius:var(--radius);}
+  .callout.danger{border-left-color:var(--danger); background:var(--danger-soft);}
+  .callout.amber{border-left-color:var(--amber); background:var(--amber-soft);}
+  .callout .lbl{font-family:'IBM Plex Mono'; font-size:0.65rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent-ink);}
+  .callout.danger .lbl{color:var(--danger);}
+  .callout.amber .lbl{color:var(--amber);}
+  .callout p{margin:0; color:var(--ink);}
+
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:18px;}
+  .tabs button{background:none; border:none; padding:9px 14px; font-size:0.84rem; font-weight:600; color:var(--ink-muted); border-bottom:2px solid transparent; margin-bottom:-1px;}
+  .tabs button.active{color:var(--accent-ink); border-bottom-color:var(--accent);}
+
+  .detail-grid{display:grid; grid-template-columns:2fr 1fr; gap:20px;}
+  @media (max-width:760px){.detail-grid{grid-template-columns:1fr;}}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:6px 14px; font-size:0.86rem;}
+  .kv dt{color:var(--ink-faint);}
+  .kv dd{margin:0; font-weight:500;}
+
+  .toast-wrap{position:fixed; bottom:20px; right:20px; display:flex; flex-direction:column; gap:8px; z-index:80;}
+  .toast{background:var(--ink); color:var(--ground); padding:10px 16px; border-radius:var(--radius); font-size:0.84rem; box-shadow:var(--shadow); max-width:340px;}
+  :root:not([data-theme="light"]) .toast{background:var(--surface-2); color:var(--ink); border:1px solid var(--line);}
+  .toast.danger{background:var(--danger); color:#fff;}
+
+  .back-link{display:inline-flex; gap:6px; align-items:center; color:var(--ink-muted); font-size:0.82rem; margin-bottom:14px; background:none; border:none; padding:0; font-weight:600;}
+  .back-link:hover{color:var(--accent);}
+  .section-title{font-size:1.02rem; margin:26px 0 12px;}
+  .muted{color:var(--ink-muted);}
+  .faint{color:var(--ink-faint);}
+  .right{text-align:right;}
+  .stack{display:flex; flex-direction:column; gap:8px;}
+  .row-actions{display:flex; gap:8px; justify-content:flex-end;}
+
+  /* ---- login screen ---- */
+  #loginScreen{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:40px 20px;}
+  .login-card{width:100%; max-width:420px; background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); padding:32px 30px;}
+  .login-card .brand{padding:0 0 4px; justify-content:center;}
+  .login-card .brand-sub{padding:0 0 22px; text-align:center; border-bottom:none;}
+  .login-users{display:flex; flex-direction:column; gap:6px; margin-bottom:6px;}
+  .login-user-btn{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:11px 14px; border:1px solid var(--line-strong); border-radius:var(--radius);
+    background:var(--surface); text-align:left; font-weight:600; font-size:0.92rem;
+  }
+  .login-user-btn:hover{border-color:var(--accent); background:var(--accent-soft);}
+  .login-user-btn .rolebadge{font-weight:500;}
+  .login-pin-box{margin-top:16px; padding-top:16px; border-top:1px solid var(--line);}
+  .login-pin-box input{text-align:center; letter-spacing:0.3em; font-size:1.2rem; font-family:'IBM Plex Mono';}
+  .login-error{color:var(--danger); font-size:0.84rem; margin-top:8px;}
+  .login-msg{background:var(--amber-soft); color:var(--amber); border-radius:var(--radius); padding:10px 12px; font-size:0.84rem; margin-bottom:18px;}
+
+  .rolebadge{display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:100px; font-size:0.68rem; font-weight:700; letter-spacing:0.03em; text-transform:uppercase;}
+  .rolebadge.admin{background:var(--accent-soft); color:var(--accent-ink);}
+  .rolebadge.agent{background:var(--faint-soft); color:var(--ink-muted);}
+  .rolebadge.revoked{background:var(--danger-soft); color:var(--danger);}
+
+  .topbar-user{display:flex; align-items:center; gap:10px; font-size:0.84rem;}
+  .topbar-user .name{font-weight:600;}
+
+  /* ---- searchable select ---- */
+  .ssel{position:relative;}
+  .ssel-list{position:absolute; top:calc(100% + 2px); left:0; right:0; background:var(--surface); border:1px solid var(--line-strong); border-radius:var(--radius); max-height:220px; overflow-y:auto; z-index:60; box-shadow:var(--shadow);}
+  .ssel-opt{padding:7px 10px; cursor:pointer; font-size:0.85rem;}
+  .ssel-opt:hover, .ssel-opt.hi{background:var(--accent-soft);}
+  .ssel-empty{padding:7px 10px; color:var(--ink-faint); font-size:0.85rem;}
+
+  /* ---- csv import ---- */
+  .dropzone{border:1.5px dashed var(--line-strong); border-radius:var(--radius); padding:22px; text-align:center; color:var(--ink-muted); font-size:0.86rem; margin-bottom:14px;}
+  .import-summary{display:flex; gap:18px; margin:12px 0; font-size:0.86rem;}
+  .import-summary b{font-family:'IBM Plex Mono'; display:block; font-size:1.1rem;}
+  .kpi.clickable{cursor:pointer;}
+  .kpi.clickable:hover{background:var(--faint-soft);}
+  .kpi.accent-top{border-top:3px solid var(--accent);}
+  .kpi.danger-top{border-top:3px solid var(--danger);}
+  .kpi.amber-top{border-top:3px solid var(--amber);}
+  .kpi.teal-top{border-top:3px solid var(--teal);}
+  .kpi.good-top{border-top:3px solid var(--good);}
+  .checkbox-row{display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:14px;}
+  .checkbox-row input{width:auto;}
+  .tabs-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin:8px 0 4px;}
+  .tabs-grid label{display:flex; align-items:center; gap:7px; text-transform:none; letter-spacing:0; font-size:0.85rem; color:var(--ink); font-weight:400;}
+  .tabs-grid input{width:auto;}
+</style>
+</head>
+<body>
+
+<div id="loginScreen" hidden></div>
+<div id="app" hidden>
+  <aside class="sidebar">
+    <div class="brand"><span class="mark"></span><span>PartsFlow</span></div>
+    <div class="brand-sub">Flotte VTC &amp; atelier</div>
+    <nav class="mainnav" id="mainnav"></nav>
+    <div class="sidebar-foot">Prototype interne — v0.2</div>
+  </aside>
+  <div>
+    <div class="topbar">
+      <h1 id="viewTitle">Tableau de bord</h1>
+      <div class="actingas" id="topbarUser"></div>
+    </div>
+    <main class="view" id="view"></main>
+  </div>
+</div>
+<div id="modalRoot"></div>
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ------------------------------------------------------------- Supabase
+   Project URL and publishable (anon) key — safe to keep in this public
+   file: they only grant what Row Level Security in schema.sql allows
+   (any signed-in PartsFlow account, nothing more). Never put the
+   `service_role` / secret key here. */
+const SUPABASE_URL = "https://akyfnanyukhlqtawgskj.supabase.co";
+const SUPABASE_KEY = "sb_publishable__5B_yoVFguUyl4PzRuF9Qw_staH7s72";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const AUTH_EMAIL_DOMAIN = "@cambouis.local";
+
+/* --------------------------------------------------- Firestore-shaped
+   data shim over Supabase/Postgres. Kept identical in shape to the
+   capability the app was first built against (db.collection(x).add(),
+   db.doc(x).get()/.update()/.set()/.onSnapshot()) so the ~40 call sites
+   throughout the views below did not need to be individually rewritten
+   — only this shim, and the auth/login code, changed. */
+const TABLE_ALIAS = { utilisateurs: "profiles" };
+function resolveTable(name){ return TABLE_ALIAS[name] || name; }
+function toSnakeKey(k){ return k.replace(/[A-Z]/g, c => "_"+c.toLowerCase()); }
+function toCamelKey(k){ return k.replace(/_([a-z0-9])/g, (_,c) => c.toUpperCase()); }
+function rowToCamel(row){
+  if(!row || typeof row !== "object") return row;
+  const out = {};
+  for(const k in row) out[toCamelKey(k)] = row[k];
+  return out;
+}
+function objToSnake(obj){
+  const out = {};
+  for(const k in obj) out[toSnakeKey(k)] = obj[k];
+  return out;
+}
+function makeDbShim(client){
+  function docRef(path){
+    const slash = path.indexOf("/");
+    const table = resolveTable(path.slice(0, slash));
+    const id = path.slice(slash+1);
+    return {
+      id,
+      async get(){
+        const { data, error } = await client.from(table).select("*").eq("id", id).maybeSingle();
+        if(error) throw error;
+        return { exists: !!data, id, data: ()=> data ? rowToCamel(data) : undefined };
+      },
+      async update(patch){
+        const { error } = await client.from(table).update(objToSnake(patch)).eq("id", id);
+        if(error) throw error;
+      },
+      async set(patch){
+        const row = Object.assign({ id }, objToSnake(patch));
+        const { error } = await client.from(table).upsert(row);
+        if(error) throw error;
+      },
+      onSnapshot(next, errCb){
+        let stopped = false;
+        (async ()=>{
+          try{
+            const { data, error } = await client.from(table).select("*").eq("id", id).maybeSingle();
+            if(error) throw error;
+            if(!stopped) next({ exists: !!data, id, data: ()=> data ? rowToCamel(data) : undefined });
+          }catch(e){ if(!stopped && errCb) errCb(e); }
+        })();
+        const channel = client.channel("doc-"+table+"-"+id)
+          .on("postgres_changes", { event:"*", schema:"public", table, filter:"id=eq."+id }, (payload)=>{
+            if(stopped) return;
+            if(payload.eventType === "DELETE") next({ exists:false, id, data:()=>undefined });
+            else next({ exists:true, id, data: ()=> rowToCamel(payload.new) });
+          })
+          .subscribe();
+        return function unsubscribe(){ stopped = true; client.removeChannel(channel); };
+      }
+    };
+  }
+  function collectionRef(name){
+    const table = resolveTable(name);
+    return {
+      doc(id){ return docRef(name + "/" + id); },
+      async add(data){
+        const { data: inserted, error } = await client.from(table).insert(objToSnake(data)).select().single();
+        if(error) throw error;
+        return { id: inserted.id };
+      },
+      async get(){
+        const { data, error } = await client.from(table).select("*");
+        if(error) throw error;
+        return { docs: (data||[]).map(row => ({ id: row.id, data: ()=> rowToCamel(row) })) };
+      }
+    };
+  }
+  return { doc: docRef, collection: collectionRef };
+}
+
+/* --------------------------------------------------------- file download
+   Plain browser download (Blob + temporary <a download>) — replaces the
+   Claude artifact's `downloads` capability, which does not exist outside
+   that sandbox. Works in any real browser. */
+function downloadFile(filename, content){
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------------------------------------------------------------- state */
+const state = {
+  db: null,
+  ready: false,
+  actingUser: null,
+  utilisateurs: [],
+  config: { devise: "FCFA" },
+  view: { name: "dashboard", params: {} },
+};
+
+const NAV = [
+  { key:"dashboard", label:"Tableau de bord", ico:"01" },
+  { key:"vehicules", label:"Véhicules", ico:"02" },
+  { key:"stock", label:"Catalogue & stock", ico:"03" },
+  { key:"achats", label:"Achats", ico:"04" },
+  { key:"devis", label:"Devis", ico:"05" },
+  { key:"factures", label:"Factures", ico:"06" },
+  { key:"atelier", label:"Atelier / OR", ico:"07" },
+  { key:"techniciens", label:"Techniciens", ico:"08" },
+  { key:"comptage", label:"Comptage stock", ico:"09" },
+  { key:"journal", label:"Journal", ico:"10" },
+  { key:"parametres", label:"Paramètres", ico:"11" },
+];
+
+const ROLES = {
+  admin: "Administrateur",
+  agent: "Agent",
+};
+/* NAV keys an admin may grant to an agent — "parametres" is deliberately
+   excluded: only an admin manages accounts, or an agent could grant itself more access. */
+const ASSIGNABLE_TABS = NAV.filter(n=>n.key!=="parametres").map(n=>n.key);
+const DEFAULT_AGENT_TABS = ["dashboard","vehicules","stock","devis","factures","atelier","techniciens"];
+const METIERS = {
+  mecanicien: "Mécanicien",
+  carrossier: "Carrossier",
+  peintre: "Peintre",
+  electricien_auto: "Électricien auto",
+  froid_auto: "Technicien froid auto",
+};
+
+/* ---------------------------------------------------------------- utils */
+function esc(s){
+  if(s===null||s===undefined) return "";
+  return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtMoney(n){
+  n = Number(n)||0;
+  return new Intl.NumberFormat("fr-FR").format(Math.round(n)) + " " + state.config.devise;
+}
+function fmtDate(iso){
+  if(!iso) return "—";
+  try{ return new Date(iso).toLocaleDateString("fr-FR", {day:"2-digit", month:"2-digit", year:"numeric"}); }
+  catch(e){ return "—"; }
+}
+function fmtDateTime(iso){
+  if(!iso) return "—";
+  try{ return new Date(iso).toLocaleString("fr-FR", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"}); }
+  catch(e){ return "—"; }
+}
+function todayIso(){ return new Date().toISOString(); }
+function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function actingUserName(){ return state.actingUser ? state.actingUser.nom : "Inconnu"; }
+function actingUserRole(){ return state.actingUser ? state.actingUser.role : null; }
+function isAdmin(){ return !!(state.actingUser && state.actingUser.role === "admin"); }
+function hasTab(key){
+  if(!state.actingUser) return false;
+  if(isAdmin()) return true;
+  if(key==="parametres") return false;
+  return Array.isArray(state.actingUser.tabs) && state.actingUser.tabs.includes(key);
+}
+function toast(msg, kind){
+  const wrap = document.getElementById("toastWrap");
+  const el = document.createElement("div");
+  el.className = "toast" + (kind==="danger" ? " danger" : "");
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 4200);
+}
+function statutPaiement(total, regle){
+  if(regle <= 0) return "impayee";
+  if(regle >= total) return "payee";
+  return "partielle";
+}
+function pillLabel(map, key){ return (map && map[key]) || key; }
+const PILL_LABELS = {
+  impayee:"Impayée", partielle:"Partielle", payee:"Payée", annulee:"Annulée",
+  brouillon:"Brouillon", envoye:"Envoyé", envoyee:"Envoyée", accepte:"Accepté", refuse:"Refusé",
+  ouvert:"Ouvert", cloture:"Clôturé", soldee:"Soldée", recue_partielle:"Reçue partielle",
+  actif:"Actif", immobilise:"Immobilisé", sorti_de_flotte:"Sorti de flotte",
+};
+function pill(status){ return '<span class="pill '+esc(status)+'">'+esc(PILL_LABELS[status]||status)+"</span>"; }
+
+/* ------------------------------------------------------------ db helpers */
+async function getAll(path){
+  const snap = await state.db.collection(path).get();
+  return snap.docs.map(d=>({ id:d.id, ...d.data() }));
+}
+async function getOne(path, id){
+  const snap = await state.db.doc(path+"/"+id).get();
+  return snap.exists ? { id: snap.id, ...snap.data() } : null;
+}
+async function nextNumero(type, prefix){
+  let value = null;
+  try{
+    const { data, error } = await sb.rpc("next_numero", { seq_name: type + "_seq" });
+    if(error) throw error;
+    value = data;
+  }catch(e){ value = Date.now() % 100000; }
+  const year = new Date().getFullYear();
+  return prefix + "-" + year + "-" + String(value).padStart(4,"0");
+}
+async function logAudit(action, cible, detail){
+  try{
+    await state.db.collection("audit").add({
+      date: todayIso(), acteur: actingUserName(), role: actingUserRole(), action, cible, detail: detail||""
+    });
+  }catch(e){ /* non bloquant */ }
+}
+async function ajusterStock(articleId, delta, type, documentType, documentNumero, commentaire){
+  const ref = state.db.doc("articles/"+articleId);
+  const snap = await ref.get();
+  if(!snap.exists) return;
+  const data = snap.data();
+  const newQte = (Number(data.stockQte)||0) + delta;
+  await ref.update({ stockQte: newQte });
+  await state.db.collection("mouvements").add({
+    articleId, reference: data.reference, designation: data.designation,
+    type, quantite: delta, documentType, documentNumero,
+    utilisateur: actingUserName(), date: todayIso(), commentaire: commentaire||""
+  });
+}
+
+/* --------------------------------------------------------------- modals */
+function openModal(title, bodyHtml, opts){
+  opts = opts || {};
+  const root = document.getElementById("modalRoot");
+  const back = document.createElement("div");
+  back.className = "modal-back";
+  back.innerHTML =
+    '<div class="modal '+(opts.wide?"wide":"")+'">'+
+      '<div class="modal-head"><h3>'+esc(title)+'</h3><button class="modal-close" aria-label="Fermer">&times;</button></div>'+
+      '<div class="modal-body">'+bodyHtml+'</div>'+
+      (opts.footHtml ? '<div class="modal-foot">'+opts.footHtml+'</div>' : '') +
+    '</div>';
+  root.innerHTML = "";
+  root.appendChild(back);
+  function close(){ back.remove(); }
+  back.querySelector(".modal-close").addEventListener("click", close);
+  back.addEventListener("mousedown", (e)=>{ if(e.target===back) close(); });
+  if(opts.onMount) opts.onMount(back, close);
+  return { el: back, close };
+}
+function closeModal(){
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = "";
+}
+function askConfirm(message, confirmLabel){
+  return new Promise(resolve=>{
+    const { close } = openModal("Confirmation", '<p style="margin:0;">'+esc(message)+"</p>", {
+      footHtml:
+        '<button class="btn ghost" id="cfNo">Annuler</button>'+
+        '<button class="btn danger" id="cfYes">'+esc(confirmLabel||"Confirmer")+"</button>",
+      onMount(back, closeFn){
+        back.querySelector("#cfNo").addEventListener("click", ()=>{ closeFn(); resolve(false); });
+        back.querySelector("#cfYes").addEventListener("click", ()=>{ closeFn(); resolve(true); });
+      }
+    });
+  });
+}
+
+/* ------------------------------------------------------ searchable select
+   A lightweight combobox: a text input that filters a list as you type,
+   backed by a hidden selected id. Used everywhere a plain <select> would
+   otherwise force scrolling through hundreds of vehicles or parts. */
+let sselSeq = 0;
+function mountSearchableSelect(container, opts){
+  const items = opts.items || [];
+  const getLabel = opts.getLabel;
+  const getId = opts.getId;
+  const onChange = opts.onChange || function(){};
+  const uid = "ssel" + (sselSeq++);
+  container.innerHTML =
+    '<div class="ssel" id="'+uid+'">'+
+      '<input type="text" class="ssel-input" placeholder="'+esc(opts.placeholder||"Rechercher…")+'" autocomplete="off">'+
+      '<div class="ssel-list" hidden></div>'+
+    '</div>';
+  const wrap = container.querySelector("#"+uid);
+  const input = wrap.querySelector(".ssel-input");
+  const list = wrap.querySelector(".ssel-list");
+  let selectedId = opts.value || null;
+  function setDisplay(){
+    const item = items.find(it=>String(getId(it))===String(selectedId));
+    input.value = item ? getLabel(item) : "";
+  }
+  function renderList(filterText){
+    const f = (filterText||"").toLowerCase();
+    const filtered = items.filter(it=>!f || getLabel(it).toLowerCase().includes(f)).slice(0,60);
+    list.innerHTML = filtered.length
+      ? filtered.map(it=>'<div class="ssel-opt" data-id="'+esc(String(getId(it)))+'">'+esc(getLabel(it))+'</div>').join("")
+      : '<div class="ssel-empty">Aucun résultat</div>';
+    list.hidden = false;
+    list.querySelectorAll(".ssel-opt").forEach(opt=>{
+      opt.addEventListener("mousedown", (e)=>{
+        e.preventDefault();
+        selectedId = opt.getAttribute("data-id");
+        setDisplay();
+        list.hidden = true;
+        onChange(selectedId);
+      });
+    });
+  }
+  input.addEventListener("focus", ()=> renderList(input.value===setDisplayText()?"":input.value));
+  function setDisplayText(){ const item = items.find(it=>String(getId(it))===String(selectedId)); return item ? getLabel(item) : ""; }
+  input.addEventListener("input", ()=> renderList(input.value));
+  input.addEventListener("blur", ()=> setTimeout(()=>{ list.hidden = true; setDisplay(); }, 150));
+  setDisplay();
+  return {
+    getValue: ()=> selectedId,
+    setValue: (id)=>{ selectedId = id; setDisplay(); }
+  };
+}
+
+/* --------------------------------------------------------------- CSV
+   A small RFC4180-ish parser (quoted fields, comma or semicolon,
+   auto-detected) plus a header-alias lookup for flexible imports. */
+function parseCSV(text){
+  text = String(text||"").replace(/^﻿/, "");
+  const firstLine = (text.split(/\r?\n/)[0]||"");
+  const delim = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
+  const rows = []; let row = [], field = "", inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i], next = text[i+1];
+    if(inQuotes){
+      if(c==='"' && next==='"'){ field+='"'; i++; }
+      else if(c==='"'){ inQuotes=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===delim){ row.push(field); field=""; }
+      else if(c==="\n" || c==="\r"){
+        if(c==="\r" && next==="\n") i++;
+        row.push(field); field="";
+        if(row.length>1 || row[0]!=="") rows.push(row);
+        row=[];
+      } else field+=c;
+    }
+  }
+  if(field!=="" || row.length){ row.push(field); rows.push(row); }
+  if(!rows.length) return { headers:[], records:[] };
+  const headers = rows[0].map(h=>h.trim());
+  const records = rows.slice(1).filter(r=>r.some(c=>c.trim()!=="")).map(r=>{
+    const obj = {};
+    headers.forEach((h,idx)=>{ obj[normalizeHeader(h)] = (r[idx]||"").trim(); });
+    return obj;
+  });
+  return { headers, records };
+}
+const DIACRITICS_RE = new RegExp("[̀-ͯ]", "g");
+function normalizeHeader(h){
+  const noAccents = String(h||"").toLowerCase().normalize("NFD").replace(DIACRITICS_RE, "");
+  return noAccents.replace(/[^a-z0-9]/g,"");
+}
+function pickField(record, aliases){
+  for(const a of aliases){ if(record[a]!==undefined && record[a]!=="") return record[a]; }
+  return "";
+}
+
+const CSV_SPECS = {
+  articles: {
+    title: "pièces du catalogue",
+    template: "reference;designation;famille;prixAchat;prixVente;tva;stockQte;stockSeuil;emplacement\nREF-PLQ-002;Plaquettes de frein arrière;Freinage;7000;12000;18;10;5;A3\n",
+    filename: "modele-articles.csv",
+    keyField: "reference",
+    map: (r)=>({
+      reference: pickField(r, ["reference","ref","référence"]),
+      designation: pickField(r, ["designation","désignation","libelle","libellé"]),
+      famille: pickField(r, ["famille","categorie","catégorie"]),
+      prixAchat: Number(pickField(r, ["prixachat","prixdachat","achatprix"]))||0,
+      prixVente: Number(pickField(r, ["prixvente","prixdevente","venteprix"]))||0,
+      tva: Number(pickField(r, ["tva"]))||18,
+      stockQte: Number(pickField(r, ["stockqte","stock","quantite","quantité"]))||0,
+      stockSeuil: Number(pickField(r, ["stockseuil","seuil","seuilalerte"]))||0,
+      emplacement: pickField(r, ["emplacement","empl","localisation"]),
+      createdAt: todayIso(),
+    }),
+    valid: (row)=> !!row.reference,
+  },
+  vehicules: {
+    title: "véhicules de la flotte",
+    template: "immatriculation;marque;modele;annee;chauffeurNom;chauffeurTelephone;km;statut\nCI-9001-QR;Toyota;Corolla;2021;Nom Prénom;0100000000;40000;actif\n",
+    filename: "modele-vehicules.csv",
+    keyField: "immatriculation",
+    map: (r)=>({
+      immatriculation: pickField(r, ["immatriculation","immat","plaque"]).toUpperCase(),
+      marque: pickField(r, ["marque"]),
+      modele: pickField(r, ["modele","modèle"]),
+      annee: Number(pickField(r, ["annee","année","an"]))||null,
+      chauffeurNom: pickField(r, ["chauffeurnom","chauffeur","conducteur"]),
+      chauffeurTelephone: pickField(r, ["chauffeurtelephone","telephone","tel","contact"]),
+      km: Number(pickField(r, ["km","kilometrage","kilométrage"]))||null,
+      statut: (["actif","immobilise","sorti_de_flotte"].includes(pickField(r,["statut","etat","état"]).toLowerCase()) ? pickField(r,["statut","etat","état"]).toLowerCase() : "actif"),
+      createdAt: todayIso(),
+    }),
+    valid: (row)=> !!row.immatriculation,
+  },
+};
+
+function openCsvImport(kind){
+  const spec = CSV_SPECS[kind];
+  const body =
+    '<p class="muted" style="margin-top:0;">Importe des '+spec.title+' depuis un fichier CSV (Excel : « Enregistrer sous → CSV »). Téléchargez le modèle ci-dessous pour voir les colonnes attendues — l\'en-tête peut être en majuscules ou minuscules, avec ou sans accents.</p>'+
+    '<div class="dropzone" id="dz"><input type="file" id="csvFile" accept=".csv,text/csv" style="margin-bottom:8px;"><br><span class="faint">ou collez le contenu CSV ci-dessous</span><textarea id="csvPaste" rows="4" style="margin-top:8px;"></textarea></div>'+
+    '<button type="button" class="btn small" id="dlTemplate">Télécharger un modèle vide</button>'+
+    '<div id="previewBox"></div>';
+  const { close } = openModal("Importer un CSV", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Fermer</button><button class="btn primary" id="doImport" disabled>Confirmer l\'import</button>',
+    onMount(back, close){
+      let parsed = null;
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#dlTemplate").addEventListener("click", ()=>{
+        downloadFile(spec.filename, spec.template);
+      });
+      function handleText(text){
+        parsed = parseCSV(text);
+        const rows = parsed.records.map(spec.map).filter(spec.valid);
+        const invalidCount = parsed.records.length - rows.length;
+        parsed.rows = rows;
+        const previewRows = rows.slice(0,8);
+        const cols = previewRows.length ? Object.keys(previewRows[0]).filter(k=>k!=="createdAt") : [];
+        back.querySelector("#previewBox").innerHTML =
+          '<div class="import-summary"><div><b>'+parsed.records.length+'</b><span class="faint">lignes lues</span></div><div><b>'+rows.length+'</b><span class="faint">valides</span></div>'+(invalidCount?'<div><b style="color:var(--danger);">'+invalidCount+'</b><span class="faint">ignorées (incomplètes)</span></div>':'')+'</div>'+
+          (rows.length ? '<div class="table-wrap" style="box-shadow:none;"><table class="grid"><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join("")+'</tr></thead><tbody>'+
+            previewRows.map(r=>'<tr>'+cols.map(c=>'<td>'+esc(r[c])+'</td>').join("")+'</tr>').join("")+
+          '</tbody></table></div>'+(rows.length>8?'<p class="faint">… et '+(rows.length-8)+' de plus.</p>':'') : '<p class="faint">Aucune ligne valide détectée — vérifiez les en-têtes de colonnes.</p>');
+        back.querySelector("#doImport").disabled = !rows.length;
+      }
+      back.querySelector("#csvFile").addEventListener("change", (e)=>{
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = ()=> handleText(String(reader.result||""));
+        reader.readAsText(file, "utf-8");
+      });
+      back.querySelector("#csvPaste").addEventListener("input", (e)=> handleText(e.target.value));
+      back.querySelector("#doImport").addEventListener("click", async ()=>{
+        if(!parsed || !parsed.rows.length) return;
+        const btn = back.querySelector("#doImport");
+        btn.disabled = true;
+        const existing = await getAll(kind);
+        const existingKeys = new Set(existing.map(x=>String(x[spec.keyField]||"").toUpperCase().trim()));
+        let created = 0, skipped = 0;
+        for(let i=0;i<parsed.rows.length;i++){
+          const row = parsed.rows[i];
+          const key = String(row[spec.keyField]||"").toUpperCase().trim();
+          if(existingKeys.has(key)){ skipped++; continue; }
+          existingKeys.add(key);
+          await state.db.collection(kind).add(row);
+          created++;
+          btn.textContent = "Import… "+(i+1)+"/"+parsed.rows.length;
+        }
+        await logAudit("Import CSV", kind, created+" créés, "+skipped+" ignorés (doublons)");
+        close();
+        toast(created+" ligne(s) importée(s)"+(skipped?", "+skipped+" doublon(s) ignoré(s)":"")+".");
+        renderView();
+      });
+    }
+  });
+}
+
+/* --------------------------------------------------------- line editor
+   A tiny reusable component for devis/facture/commande line items.
+   items: array of {type?, articleId?, reference, designation, quantite, prixUnitaire, technicienId?, technicienNom?}
+*/
+function computeLigneMontant(l){ return (Number(l.quantite)||0) * (Number(l.prixUnitaire)||0); }
+function renderLinesEditor(container, items, articles, opts){
+  opts = opts || {};
+  const allowMainOeuvre = opts.allowMainOeuvre !== false;
+  const techniciens = opts.techniciens || [];
+  function redraw(){
+    const rows = items.map((l,i)=>{
+      const isPiece = l.type !== "main_oeuvre";
+      return (
+        '<tr data-i="'+i+'">'+
+          '<td style="width:110px;">'+
+            '<select data-f="type" data-i="'+i+'">'+
+              '<option value="piece" '+(isPiece?"selected":"")+'>Pièce</option>'+
+              (allowMainOeuvre ? '<option value="main_oeuvre" '+(!isPiece?"selected":"")+'>Main d\'œuvre</option>' : "") +
+            "</select></td>"+
+          '<td style="min-width:220px;">'+
+            (isPiece
+              ? '<div class="ssel-slot" data-slot="art" data-i="'+i+'"></div>'
+              : '<input type="text" data-f="designation" data-i="'+i+'" placeholder="Description de la prestation" value="'+esc(l.designation||"")+'" style="margin-bottom:5px;">'+
+                (techniciens.length ? '<div class="ssel-slot" data-slot="tech" data-i="'+i+'"></div>' : '')
+            )+
+          '</td>'+
+          '<td style="width:70px;"><input type="number" min="0" step="1" data-f="quantite" data-i="'+i+'" value="'+(l.quantite==null?1:l.quantite)+'"></td>'+
+          '<td style="width:120px;"><input type="number" min="0" step="1" data-f="prixUnitaire" data-i="'+i+'" value="'+(l.prixUnitaire==null?"":l.prixUnitaire)+'"></td>'+
+          '<td class="num" style="width:110px;">'+fmtMoney(computeLigneMontant(l))+'</td>'+
+          '<td style="width:34px;"><button type="button" class="btn ghost small" data-remove="'+i+'" title="Retirer">&times;</button></td>'+
+        "</tr>"
+      );
+    }).join("");
+    const total = items.reduce((s,l)=>s+computeLigneMontant(l),0);
+    container.innerHTML =
+      '<table class="lines-table"><thead><tr>'+
+        '<th>Type</th><th>Référence / description</th><th>Qté</th><th>P.U.</th><th>Montant</th><th></th>'+
+      '</tr></thead><tbody>'+
+        (rows || '<tr><td colspan="6" class="faint" style="padding:10px 6px;">Aucune ligne — ajoutez une pièce ou une prestation.</td></tr>')+
+      '</tbody></table>'+
+      '<button type="button" class="btn small" id="addLineBtn">+ Ajouter une ligne</button>'+
+      '<div class="lines-total"><span class="muted">Total</span> <b>'+fmtMoney(total)+"</b></div>";
+
+    container.querySelectorAll('[data-slot="art"]').forEach(slot=>{
+      const i = Number(slot.getAttribute("data-i"));
+      mountSearchableSelect(slot, {
+        items: articles,
+        getId: a=>a.id, getLabel: a=>a.reference+" — "+a.designation+" (dispo "+(a.stockQte||0)+")",
+        value: items[i].articleId, placeholder: "Rechercher une référence…",
+        onChange: (id)=>{
+          const art = articles.find(a=>a.id===id);
+          items[i].articleId = id || null;
+          items[i].reference = art ? art.reference : null;
+          items[i].designation = art ? art.designation : "";
+          items[i].prixUnitaire = art ? art.prixVente : items[i].prixUnitaire;
+          redraw();
+        }
+      });
+    });
+    container.querySelectorAll('[data-slot="tech"]').forEach(slot=>{
+      const i = Number(slot.getAttribute("data-i"));
+      mountSearchableSelect(slot, {
+        items: [{id:"", nom:"— non assigné —", metier:""}, ...techniciens],
+        getId: t=>t.id, getLabel: t=>t.nom + (t.metier ? " — "+(METIERS[t.metier]||t.metier) : ""),
+        value: items[i].technicienId||"", placeholder: "Assigner à un technicien…",
+        onChange: (id)=>{
+          const tech = techniciens.find(t=>t.id===id);
+          items[i].technicienId = id || null;
+          items[i].technicienNom = tech ? tech.nom : null;
+          items[i].metier = tech ? tech.metier : null;
+        }
+      });
+    });
+    container.querySelectorAll("select[data-f], input[data-f]").forEach(inp=>{
+      inp.addEventListener(inp.tagName==="SELECT" ? "change" : "input", (e)=>{
+        const i = Number(e.target.getAttribute("data-i"));
+        const f = e.target.getAttribute("data-f");
+        let v = e.target.value;
+        if(f==="type"){
+          items[i].type = v;
+          if(v==="main_oeuvre"){ items[i].articleId=null; items[i].reference=null; if(items[i].prixUnitaire==null) items[i].prixUnitaire=0; }
+          else { items[i].technicienId=null; items[i].technicienNom=null; }
+          redraw();
+          return;
+        }
+        if(f==="quantite" || f==="prixUnitaire"){
+          items[i][f] = v===""? "" : Number(v);
+          const totalEl = container.querySelector(".lines-total b");
+          const rowMontant = container.querySelector('tr[data-i="'+i+'"] td.num');
+          if(rowMontant) rowMontant.textContent = fmtMoney(computeLigneMontant(items[i]));
+          if(totalEl) totalEl.textContent = fmtMoney(items.reduce((s,l)=>s+computeLigneMontant(l),0));
+          return;
+        }
+        items[i][f] = v;
+      });
+    });
+    container.querySelectorAll("[data-remove]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        items.splice(Number(btn.getAttribute("data-remove")), 1);
+        redraw();
+      });
+    });
+    const addBtn = container.querySelector("#addLineBtn");
+    if(addBtn) addBtn.addEventListener("click", ()=>{
+      items.push({ type:"piece", articleId:null, designation:"", quantite:1, prixUnitaire:0 });
+      redraw();
+    });
+  }
+  redraw();
+  return { getItems: ()=> items.filter(l => l.type==="main_oeuvre" ? (l.designation && l.prixUnitaire!==undefined) : l.articleId) };
+}
+
+/* ----------------------------------------------------------------- nav */
+function setView(name, params){
+  state.view = { name, params: params||{} };
+  location.hash = name + (params && params.id ? ("/"+params.id) : "");
+  renderNav();
+  renderView();
+}
+function renderNav(){
+  const nav = document.getElementById("mainnav");
+  const visible = NAV.filter(n=>hasTab(n.key));
+  nav.innerHTML = visible.map(n=>
+    '<button data-key="'+n.key+'" class="'+(state.view.name===n.key?"active":"")+'">'+
+      '<span class="nav-ico">'+n.ico+'</span>'+esc(n.label)+
+    "</button>"
+  ).join("");
+  nav.querySelectorAll("button").forEach(b=>{
+    b.addEventListener("click", ()=> setView(b.getAttribute("data-key")));
+  });
+  document.getElementById("viewTitle").textContent =
+    (NAV.find(n=>n.key===state.view.name)||{}).label || "";
+}
+
+async function renderView(){
+  const view = document.getElementById("view");
+  view.innerHTML = '<p class="faint">Chargement…</p>';
+  if(!state.db){
+    view.innerHTML = '<div class="callout danger"><span class="lbl">Indisponible</span><p>La base de données de l\'application n\'a pas pu être chargée dans cette vue. Réouvrez la page publiée.</p></div>';
+    return;
+  }
+  if(!hasTab(state.view.name)){
+    view.innerHTML = '<div class="callout danger"><span class="lbl">Accès restreint</span><p>Vous n\'avez pas accès à cet onglet. Demandez à un administrateur de vous l\'ouvrir dans Paramètres.</p></div>';
+    return;
+  }
+  try{
+    const fn = VIEWS[state.view.name] || VIEWS.dashboard;
+    await fn(view, state.view.params);
+  }catch(e){
+    console.error(e);
+    view.innerHTML = '<div class="callout danger"><span class="lbl">Erreur</span><p>'+esc(e.message||String(e))+"</p></div>";
+  }
+}
+
+/* ================================================================= VIEWS */
+const VIEWS = {};
+
+/* ---- Dashboard ---------------------------------------------------- */
+VIEWS.dashboard = async function(view){
+  const [vehicules, articles, factures, ordres] = await Promise.all([
+    getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres")
+  ]);
+  const facturesActives = factures.filter(f=>f.statutPaiement!=="annulee");
+  const totalDu = facturesActives.reduce((s,f)=> s + Math.max(0,(f.montantTotal||0)-(f.montantRegle||0)), 0);
+  const stockValeur = articles.reduce((s,a)=> s + (Number(a.stockQte)||0)*(Number(a.prixAchat)||0), 0);
+  const sousSeuil = articles.filter(a=> (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0));
+  const orOuverts = ordres.filter(o=>o.statut==="ouvert");
+
+  const parVehicule = {};
+  facturesActives.forEach(f=>{
+    const du = Math.max(0,(f.montantTotal||0)-(f.montantRegle||0));
+    if(du<=0) return;
+    parVehicule[f.vehiculeId] = (parVehicule[f.vehiculeId]||0) + du;
+  });
+  const topDebiteurs = Object.entries(parVehicule)
+    .sort((a,b)=>b[1]-a[1]).slice(0,8)
+    .map(([vid, du])=>({ vehicule: vehicules.find(v=>v.id===vid), du }))
+    .filter(r=>r.vehicule);
+
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Vue d\'ensemble de la flotte, du stock et des impayés — cliquez un chiffre pour voir le détail.</p></div></div>'+
+    '<div class="kpi-grid">'+
+      '<div class="kpi clickable accent-top" data-goto="vehicules"><div class="lbl">Véhicules suivis</div><div class="val">'+vehicules.length+'</div><div class="sub">flotte VTC</div></div>'+
+      '<div class="kpi clickable danger-top" data-goto="factures" data-filter="dues"><div class="lbl">Total dû (flotte)</div><div class="val '+(totalDu>0?"danger":"")+'">'+fmtMoney(totalDu)+'</div><div class="sub">factures non soldées</div></div>'+
+      '<div class="kpi clickable teal-top" data-goto="stock"><div class="lbl">Valeur du stock</div><div class="val">'+fmtMoney(stockValeur)+'</div><div class="sub">au coût d\'achat</div></div>'+
+      '<div class="kpi clickable amber-top" data-goto="stock" data-filter="sousSeuil"><div class="lbl">Réf. sous seuil</div><div class="val '+(sousSeuil.length>0?"amber":"")+'">'+sousSeuil.length+'</div><div class="sub">à réapprovisionner</div></div>'+
+      '<div class="kpi clickable good-top" data-goto="atelier" data-filter="ouvert"><div class="lbl">OR ouverts</div><div class="val">'+orOuverts.length+'</div><div class="sub">interventions en cours</div></div>'+
+    '</div>'+
+    '<div class="detail-grid">'+
+      '<div>'+
+        '<h3 class="section-title">Véhicules avec le plus d\'impayés</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Immatriculation</th><th>Chauffeur</th><th class="num">Montant dû</th></tr></thead><tbody>'+
+          (topDebiteurs.length ? topDebiteurs.map(r=>
+            '<tr class="clickable" data-veh="'+r.vehicule.id+'"><td class="mono">'+esc(r.vehicule.immatriculation)+'</td><td>'+esc(r.vehicule.chauffeurNom||"—")+'</td><td class="num mono">'+fmtMoney(r.du)+"</td></tr>"
+          ).join("") : '<tr class="empty-row"><td colspan="3">Aucun impayé — la flotte est à jour.</td></tr>')+
+        "</tbody></table></div>"+
+      "</div>"+
+      '<div>'+
+        '<h3 class="section-title">Références sous seuil</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Stock</th></tr></thead><tbody>'+
+          (sousSeuil.length ? sousSeuil.slice(0,10).map(a=>
+            '<tr class="clickable" data-art="'+a.id+'"><td>'+esc(a.reference)+'<br><span class="faint">'+esc(a.designation)+'</span></td><td class="num mono">'+(a.stockQte||0)+' / '+(a.stockSeuil||0)+"</td></tr>"
+          ).join("") : '<tr class="empty-row"><td colspan="2">Aucune rupture prévisible.</td></tr>')+
+        "</tbody></table></div>"+
+      "</div>"+
+    "</div>";
+
+  view.querySelectorAll("[data-veh]").forEach(tr=>{
+    tr.addEventListener("click", ()=> setView("vehicule-detail", { id: tr.getAttribute("data-veh") }));
+  });
+  view.querySelectorAll("[data-art]").forEach(tr=>{
+    tr.addEventListener("click", ()=> setView("stock", { filter:"sousSeuil" }));
+  });
+  view.querySelectorAll("[data-goto]").forEach(el=>{
+    el.addEventListener("click", ()=> setView(el.getAttribute("data-goto"), { filter: el.getAttribute("data-filter")||undefined }));
+  });
+};
+
+/* ---- Véhicules ------------------------------------------------------ */
+VIEWS.vehicules = async function(view){
+  const vehicules = await getAll("vehicules");
+  vehicules.sort((a,b)=> (a.immatriculation||"").localeCompare(b.immatriculation||""));
+
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Flotte VTC suivie par PartsFlow — '+vehicules.length+' véhicule(s) enregistré(s).</p></div>'+
+      '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newVehicule">+ Nouveau véhicule</button></div></div>'+
+    '<div class="toolbar"><input type="search" id="vehSearch" placeholder="Rechercher par immatriculation, chauffeur, marque…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr>'+
+      '<th>Immatriculation</th><th>Véhicule</th><th>Chauffeur</th><th>Statut</th><th class="num">Km</th>'+
+    "</tr></thead><tbody id=\"vehTbody\"></tbody></table></div>";
+
+  function draw(filter){
+    const f = (filter||"").toLowerCase();
+    const rows = vehicules.filter(v=>
+      !f || [v.immatriculation,v.chauffeurNom,v.marque,v.modele].some(x=>(x||"").toLowerCase().includes(f))
+    );
+    document.getElementById("vehTbody").innerHTML = rows.length ? rows.map(v=>
+      '<tr class="clickable" data-id="'+v.id+'">'+
+        '<td class="mono">'+esc(v.immatriculation)+'</td>'+
+        '<td>'+esc(v.marque)+" "+esc(v.modele)+(v.annee?' <span class="faint">('+v.annee+")</span>":"")+'</td>'+
+        '<td>'+esc(v.chauffeurNom||"—")+"</td>"+
+        '<td>'+pill(v.statut||"actif")+"</td>"+
+        '<td class="num mono">'+(v.km!=null? new Intl.NumberFormat("fr-FR").format(v.km) : "—")+"</td>"+
+      "</tr>"
+    ).join("") : '<tr class="empty-row"><td colspan="5">Aucun véhicule ne correspond.</td></tr>';
+    document.querySelectorAll("#vehTbody [data-id]").forEach(tr=>{
+      tr.addEventListener("click", ()=> setView("vehicule-detail", { id: tr.getAttribute("data-id") }));
+    });
+  }
+  draw("");
+  document.getElementById("vehSearch").addEventListener("input", e=>draw(e.target.value));
+  document.getElementById("newVehicule").addEventListener("click", ()=> openVehiculeForm());
+  document.getElementById("importCsv").addEventListener("click", ()=> openCsvImport("vehicules"));
+};
+
+function openVehiculeForm(existing){
+  const v = existing || {};
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Immatriculation</label><input id="f_immat" value="'+esc(v.immatriculation||"")+'" placeholder="AB-1234-CD"></div>'+
+      '<div class="field"><label>Statut</label><select id="f_statut">'+
+        ["actif","immobilise","sorti_de_flotte"].map(s=>'<option value="'+s+'" '+(v.statut===s?"selected":"")+'>'+PILL_LABELS[s]+"</option>").join("")+
+      "</select></div>"+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Marque</label><input id="f_marque" value="'+esc(v.marque||"")+'"></div>'+
+      '<div class="field"><label>Modèle</label><input id="f_modele" value="'+esc(v.modele||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Année</label><input id="f_annee" type="number" value="'+esc(v.annee||"")+'"></div>'+
+      '<div class="field"><label>Kilométrage</label><input id="f_km" type="number" value="'+esc(v.km||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Chauffeur</label><input id="f_chauffeur" value="'+esc(v.chauffeurNom||"")+'"></div>'+
+      '<div class="field"><label>Téléphone chauffeur</label><input id="f_tel" value="'+esc(v.chauffeurTelephone||"")+'"></div>'+
+    "</div>";
+  const { close } = openModal(existing ? "Modifier le véhicule" : "Nouveau véhicule", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
+        if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
+        const data = {
+          immatriculation: immat,
+          statut: back.querySelector("#f_statut").value,
+          marque: back.querySelector("#f_marque").value.trim(),
+          modele: back.querySelector("#f_modele").value.trim(),
+          annee: Number(back.querySelector("#f_annee").value)||null,
+          km: Number(back.querySelector("#f_km").value)||null,
+          chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
+          chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
+        };
+        if(existing){
+          await state.db.doc("vehicules/"+existing.id).update(data);
+          await logAudit("Modification véhicule", immat, "");
+        } else {
+          data.createdAt = todayIso();
+          await state.db.collection("vehicules").add(data);
+          await logAudit("Création véhicule", immat, "");
+        }
+        close();
+        toast("Véhicule enregistré.");
+        renderView();
+      });
+    }
+  });
+}
+
+VIEWS["vehicule-detail"] = async function(view, params){
+  const v = await getOne("vehicules", params.id);
+  if(!v){ view.innerHTML = '<p class="faint">Véhicule introuvable.</p>'; return; }
+  const [factures, ordres] = await Promise.all([getAll("factures"), getAll("ordres")]);
+  const mesFactures = factures.filter(f=>f.vehiculeId===v.id).sort((a,b)=> new Date(b.date)-new Date(a.date));
+  const mesOR = ordres.filter(o=>o.vehiculeId===v.id).sort((a,b)=> new Date(b.dateOuverture)-new Date(a.dateOuverture));
+  const facturesActives = mesFactures.filter(f=>f.statutPaiement!=="annulee");
+  const totalDepenses = facturesActives.reduce((s,f)=>s+(f.montantTotal||0),0);
+  const totalRegle = facturesActives.reduce((s,f)=>s+(f.montantRegle||0),0);
+  const totalDu = Math.max(0, totalDepenses-totalRegle);
+
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour aux véhicules</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(v.immatriculation)+'</h2>'+
+      '<p class="lede">'+esc(v.marque)+" "+esc(v.modele)+(v.annee?" · "+v.annee:"")+" · Chauffeur : "+esc(v.chauffeurNom||"non renseigné")+"</p></div>"+
+      '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button></div></div>'+
+    '<div class="kpi-grid">'+
+      '<div class="kpi"><div class="lbl">Statut</div><div class="val" style="font-size:1.1rem;">'+pill(v.statut||"actif")+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Dépenses totales</div><div class="val">'+fmtMoney(totalDepenses)+'</div><div class="sub">pièces + main d\'œuvre</div></div>'+
+      '<div class="kpi"><div class="lbl">Réglé à ce jour</div><div class="val">'+fmtMoney(totalRegle)+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Montant dû</div><div class="val '+(totalDu>0?"danger":"")+'">'+fmtMoney(totalDu)+'</div></div>'+
+    "</div>"+
+    '<h3 class="section-title">Factures</h3>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Date</th><th class="num">Total</th><th class="num">Réglé</th><th class="num">Reste dû</th><th>Statut</th></tr></thead><tbody>'+
+      (mesFactures.length ? mesFactures.map(f=>{
+        const reste = Math.max(0,(f.montantTotal||0)-(f.montantRegle||0));
+        return '<tr class="clickable" data-f="'+f.id+'"><td class="mono">'+esc(f.numero)+'</td><td>'+fmtDate(f.date)+'</td><td class="num mono">'+fmtMoney(f.montantTotal)+'</td><td class="num mono">'+fmtMoney(f.montantRegle)+'</td><td class="num mono">'+fmtMoney(reste)+'</td><td>'+pill(f.statutPaiement)+"</td></tr>";
+      }).join("") : '<tr class="empty-row"><td colspan="6">Aucune facture pour ce véhicule.</td></tr>')+
+    "</tbody></table></div>"+
+    '<h3 class="section-title">Ordres de réparation</h3>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Ouverture</th><th>Statut</th><th class="num">Pièces</th><th class="num">Interventions</th></tr></thead><tbody>'+
+      (mesOR.length ? mesOR.map(o=>
+        '<tr class="clickable" data-or="'+o.id+'"><td class="mono">'+esc(o.numero)+'</td><td>'+fmtDate(o.dateOuverture)+'</td><td>'+pill(o.statut)+'</td><td class="num">'+(o.pieces||[]).length+'</td><td class="num">'+(o.interventions||[]).length+"</td></tr>"
+      ).join("") : '<tr class="empty-row"><td colspan="5">Aucun ordre de réparation pour ce véhicule.</td></tr>')+
+    "</tbody></table></div>";
+
+  view.querySelector("#back").addEventListener("click", ()=>setView("vehicules"));
+  view.querySelector("#editVeh").addEventListener("click", ()=>openVehiculeForm(v));
+  view.querySelectorAll("[data-f]").forEach(tr=>tr.addEventListener("click", ()=>setView("facture-detail",{id:tr.getAttribute("data-f")})));
+  view.querySelectorAll("[data-or]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-or")})));
+};
+
+/* ---- Stock / catalogue ---------------------------------------------- */
+VIEWS.stock = async function(view, params){
+  const [articles, fournisseurs] = await Promise.all([getAll("articles"), getAll("fournisseurs")]);
+  articles.sort((a,b)=>(a.reference||"").localeCompare(b.reference||""));
+  const startSousSeuil = !!(params && params.filter==="sousSeuil");
+
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Référentiel des pièces et niveaux de stock — '+articles.length+' référence(s).</p></div>'+
+      '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newArticle">+ Nouvel article</button></div></div>'+
+    '<div class="toolbar"><input type="search" id="artSearch" placeholder="Rechercher une référence, désignation, famille…">'+
+      '<label class="checkbox-row" style="margin:0;"><input type="checkbox" id="onlyLow"> Sous seuil uniquement</label></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr>'+
+      '<th>Référence</th><th>Désignation</th><th>Famille</th><th class="num">Stock</th><th class="num">Seuil</th><th class="num">Prix vente</th><th></th>'+
+    "</tr></thead><tbody id=\"artTbody\"></tbody></table></div>";
+
+  function draw(){
+    const f = document.getElementById("artSearch").value.toLowerCase();
+    const onlyLow = document.getElementById("onlyLow").checked;
+    const rows = articles.filter(a=>{
+      const textOk = !f || [a.reference,a.designation,a.famille].some(x=>(x||"").toLowerCase().includes(f));
+      const lowOk = !onlyLow || (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0);
+      return textOk && lowOk;
+    });
+    document.getElementById("artTbody").innerHTML = rows.length ? rows.map(a=>{
+      const low = (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0);
+      return '<tr>'+
+        '<td class="mono clickable" data-hist="'+a.id+'">'+esc(a.reference)+'</td>'+
+        '<td>'+esc(a.designation)+'</td>'+
+        '<td>'+esc(a.famille||"—")+'</td>'+
+        '<td class="num mono">'+(a.stockQte||0)+(low?' <span class="badge-low">bas</span>':"")+'</td>'+
+        '<td class="num mono">'+(a.stockSeuil||0)+'</td>'+
+        '<td class="num mono">'+fmtMoney(a.prixVente)+'</td>'+
+        '<td class="row-actions"><button class="btn small" data-adj="'+a.id+'">Ajuster</button><button class="btn small ghost" data-edit="'+a.id+'">Modifier</button></td>'+
+      "</tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="7">Aucun article ne correspond.</td></tr>';
+
+    document.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openArticleForm(articles.find(a=>a.id===b.getAttribute("data-edit")), fournisseurs)));
+    document.querySelectorAll("[data-adj]").forEach(b=>b.addEventListener("click", ()=>openStockAdjustForm(articles.find(a=>a.id===b.getAttribute("data-adj")))));
+    document.querySelectorAll("[data-hist]").forEach(b=>b.addEventListener("click", ()=>openMouvementsHistory(articles.find(a=>a.id===b.getAttribute("data-hist")))));
+  }
+  document.getElementById("onlyLow").checked = startSousSeuil;
+  draw();
+  document.getElementById("artSearch").addEventListener("input", draw);
+  document.getElementById("onlyLow").addEventListener("change", draw);
+  document.getElementById("newArticle").addEventListener("click", ()=>openArticleForm(null, fournisseurs));
+  document.getElementById("importCsv").addEventListener("click", ()=>openCsvImport("articles"));
+};
+
+function openArticleForm(existing, fournisseurs){
+  const a = existing || {};
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 2fr;">'+
+      '<div class="field"><label>Référence</label><input id="f_ref" value="'+esc(a.reference||"")+'"></div>'+
+      '<div class="field"><label>Désignation</label><input id="f_desig" value="'+esc(a.designation||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Famille</label><input id="f_famille" value="'+esc(a.famille||"")+'" placeholder="Freinage, filtration, carrosserie…"></div>'+
+      '<div class="field"><label>Fournisseur</label><div id="fournSlot"></div></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr 1fr;">'+
+      '<div class="field"><label>Prix d\'achat</label><input id="f_pachat" type="number" value="'+esc(a.prixAchat||0)+'"></div>'+
+      '<div class="field"><label>Prix de vente</label><input id="f_pvente" type="number" value="'+esc(a.prixVente||0)+'"></div>'+
+      '<div class="field"><label>TVA (%)</label><input id="f_tva" type="number" value="'+esc(a.tva!=null?a.tva:18)+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr 1fr;">'+
+      '<div class="field"><label>Stock actuel</label><input id="f_stock" type="number" value="'+esc(existing? a.stockQte||0 : 0)+'" '+(existing?"disabled title=\"Utilisez « Ajuster » pour changer le stock\"":"")+'></div>'+
+      '<div class="field"><label>Seuil de réappro.</label><input id="f_seuil" type="number" value="'+esc(a.stockSeuil||0)+'"></div>'+
+      '<div class="field"><label>Emplacement</label><input id="f_emp" value="'+esc(a.emplacement||"")+'"></div>'+
+    "</div>"+
+    (existing && !isAdmin() ? '<div class="callout amber"><span class="lbl">Info</span><p>Seul un administrateur peut modifier un prix existant.</p></div>' : "");
+
+  const { close } = openModal(existing?"Modifier l'article":"Nouvel article", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      const fournPicker = mountSearchableSelect(back.querySelector("#fournSlot"), {
+        items: fournisseurs, getId:f=>f.id, getLabel:f=>f.nom, value: a.fournisseurId||null, placeholder:"Rechercher un fournisseur…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      if(existing && !isAdmin()){
+        back.querySelector("#f_pachat").disabled = true;
+        back.querySelector("#f_pvente").disabled = true;
+      }
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const ref = back.querySelector("#f_ref").value.trim();
+        if(!ref){ toast("La référence est obligatoire.", "danger"); return; }
+        const data = {
+          reference: ref,
+          designation: back.querySelector("#f_desig").value.trim(),
+          famille: back.querySelector("#f_famille").value.trim(),
+          fournisseurId: fournPicker.getValue() || null,
+          prixAchat: Number(back.querySelector("#f_pachat").value)||0,
+          prixVente: Number(back.querySelector("#f_pvente").value)||0,
+          tva: Number(back.querySelector("#f_tva").value)||0,
+          stockSeuil: Number(back.querySelector("#f_seuil").value)||0,
+          emplacement: back.querySelector("#f_emp").value.trim(),
+        };
+        if(existing){
+          await state.db.doc("articles/"+existing.id).update(data);
+          await logAudit("Modification article", ref, "");
+        } else {
+          data.stockQte = Number(back.querySelector("#f_stock").value)||0;
+          data.createdAt = todayIso();
+          await state.db.collection("articles").add(data);
+          await logAudit("Création article", ref, "");
+        }
+        close(); toast("Article enregistré."); renderView();
+      });
+    }
+  });
+}
+
+function openStockAdjustForm(article){
+  if(!isAdmin()){ toast("Seul un administrateur peut ajuster le stock manuellement.", "danger"); return; }
+  const body =
+    '<p class="muted" style="margin-top:0;">'+esc(article.reference)+" — "+esc(article.designation)+'<br>Stock actuel : <b class="mono">'+(article.stockQte||0)+"</b></p>"+
+    '<div class="field"><label>Nouvelle quantité physique</label><input id="f_qte" type="number" value="'+(article.stockQte||0)+'"></div>'+
+    '<div class="field"><label>Motif</label><input id="f_motif" placeholder="Casse, correction, retour client…"></div>'+
+    '';
+  const { close } = openModal("Ajuster le stock", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Valider l\'ajustement</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const newQte = Number(back.querySelector("#f_qte").value);
+        const motif = back.querySelector("#f_motif").value.trim();
+        const delta = newQte - (article.stockQte||0);
+        if(delta===0){ close(); return; }
+        await ajusterStock(article.id, delta, "ajustement", "ajustement_manuel", "—", motif || "Ajustement manuel");
+        await logAudit("Ajustement stock", article.reference, (delta>0?"+":"")+delta+" — "+motif);
+        close(); toast("Stock ajusté."); renderView();
+      });
+    }
+  });
+}
+
+async function openMouvementsHistory(article){
+  const all = await getAll("mouvements");
+  const rows = all.filter(m=>m.articleId===article.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const body = '<div class="table-wrap" style="box-shadow:none;"><table class="grid"><thead><tr><th>Date</th><th>Type</th><th class="num">Qté</th><th>Document</th><th>Utilisateur</th></tr></thead><tbody>'+
+    (rows.length ? rows.map(m=>
+      '<tr><td>'+fmtDateTime(m.date)+'</td><td>'+esc(m.type)+'</td><td class="num mono">'+(m.quantite>0?"+":"")+m.quantite+'</td><td class="mono">'+esc(m.documentNumero||"—")+'</td><td>'+esc(m.utilisateur)+"</td></tr>"
+    ).join("") : '<tr class="empty-row"><td colspan="5">Aucun mouvement enregistré.</td></tr>')+
+    "</tbody></table></div>";
+  openModal("Mouvements — "+article.reference, body, { wide:true, footHtml:'<button class="btn" id="cl">Fermer</button>', onMount(back,close){ back.querySelector("#cl").addEventListener("click",close); } });
+}
+
+/* ---- Achats (fournisseurs + commandes) ------------------------------ */
+VIEWS.achats = async function(view){
+  const [fournisseurs, commandes, articles] = await Promise.all([getAll("fournisseurs"), getAll("commandes"), getAll("articles")]);
+  commandes.sort((a,b)=>new Date(b.dateCommande)-new Date(a.dateCommande));
+
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Fournisseurs et commandes d\'approvisionnement.</p></div>'+
+      '<div class="row-actions"><button class="btn" id="newFourn">+ Fournisseur</button><button class="btn primary" id="newCmd">+ Nouvelle commande</button></div></div>'+
+    '<h3 class="section-title">Commandes fournisseurs</h3>'+
+    '<div class="toolbar"><input type="search" id="cmdSearch" placeholder="Rechercher un n°, un fournisseur…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Fournisseur</th><th>Date</th><th>Statut</th><th class="num">Lignes</th></tr></thead><tbody id="cmdTbody"></tbody></table></div>'+
+    '<h3 class="section-title">Fournisseurs</h3>'+
+    '<div class="toolbar"><input type="search" id="fournSearch" placeholder="Rechercher un fournisseur…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Téléphone</th><th class="num">Délai (jours)</th></tr></thead><tbody id="fournTbody"></tbody></table></div>';
+
+  function drawCmd(){
+    const t = document.getElementById("cmdSearch").value.toLowerCase();
+    const rows = commandes.filter(c=>{
+      const f = fournisseurs.find(x=>x.id===c.fournisseurId);
+      return !t || (c.numero||"").toLowerCase().includes(t) || (f&&f.nom||"").toLowerCase().includes(t);
+    });
+    document.getElementById("cmdTbody").innerHTML = rows.length ? rows.map(c=>{
+      const f = fournisseurs.find(x=>x.id===c.fournisseurId);
+      return '<tr class="clickable" data-cmd="'+c.id+'"><td class="mono">'+esc(c.numero)+'</td><td>'+esc(f?f.nom:"—")+'</td><td>'+fmtDate(c.dateCommande)+'</td><td>'+pill(c.statut)+'</td><td class="num">'+(c.lignes||[]).length+"</td></tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="5">Aucune commande ne correspond.</td></tr>';
+    document.querySelectorAll("[data-cmd]").forEach(tr=>tr.addEventListener("click", ()=>openCommandeDetail(tr.getAttribute("data-cmd"))));
+  }
+  function drawFourn(){
+    const t = document.getElementById("fournSearch").value.toLowerCase();
+    const rows = fournisseurs.filter(f=>!t || (f.nom||"").toLowerCase().includes(t));
+    document.getElementById("fournTbody").innerHTML = rows.length ? rows.map(f=>
+      '<tr><td>'+esc(f.nom)+'</td><td>'+esc(f.telephone||"—")+'</td><td class="num mono">'+(f.delaiJours||"—")+"</td></tr>"
+    ).join("") : '<tr class="empty-row"><td colspan="3">Aucun fournisseur ne correspond.</td></tr>';
+  }
+  drawCmd(); drawFourn();
+  document.getElementById("cmdSearch").addEventListener("input", drawCmd);
+  document.getElementById("fournSearch").addEventListener("input", drawFourn);
+  document.getElementById("newFourn").addEventListener("click", ()=>openFournisseurForm());
+  document.getElementById("newCmd").addEventListener("click", ()=>openCommandeForm(fournisseurs, articles));
+};
+
+function openFournisseurForm(){
+  const body =
+    '<div class="field"><label>Nom</label><input id="f_nom"></div>'+
+    '<div class="field"><label>Téléphone</label><input id="f_tel"></div>'+
+    '<div class="field"><label>Délai de livraison habituel (jours)</label><input id="f_delai" type="number" value="7"></div>';
+  const { close } = openModal("Nouveau fournisseur", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const nom = back.querySelector("#f_nom").value.trim();
+        if(!nom){ toast("Le nom est obligatoire.", "danger"); return; }
+        await state.db.collection("fournisseurs").add({
+          nom, telephone: back.querySelector("#f_tel").value.trim(),
+          delaiJours: Number(back.querySelector("#f_delai").value)||0
+        });
+        close(); toast("Fournisseur ajouté."); renderView();
+      });
+    }
+  });
+}
+
+function openCommandeForm(fournisseurs, articles){
+  const items = [];
+  const body =
+    '<div class="field"><label>Fournisseur</label><div id="fournSlot"></div></div>'+
+    '<div class="field"><label>Date de livraison prévue</label><input id="f_datelivraison" type="date"></div>'+
+    '<div class="field"><label>Lignes commandées</label><div id="linesBox"></div></div>';
+  const { close } = openModal("Nouvelle commande fournisseur", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Créer la commande</button>',
+    onMount(back, close){
+      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { allowMainOeuvre:false });
+      const fournPicker = mountSearchableSelect(back.querySelector("#fournSlot"), {
+        items: fournisseurs, getId:f=>f.id, getLabel:f=>f.nom, placeholder:"Rechercher un fournisseur…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const fournisseurId = fournPicker.getValue();
+        if(!fournisseurId){ toast("Choisissez un fournisseur.", "danger"); return; }
+        const lignes = editor.getItems().map(l=>({
+          articleId:l.articleId, reference:l.reference, designation:l.designation,
+          qteCommandee:Number(l.quantite)||0, qteRecue:0, prixUnitaire:Number(l.prixUnitaire)||0
+        }));
+        if(!lignes.length){ toast("Ajoutez au moins une ligne.", "danger"); return; }
+        const numero = await nextNumero("commande","CMD");
+        await state.db.collection("commandes").add({
+          numero, fournisseurId, statut:"envoyee",
+          dateCommande: todayIso(), dateReceptionPrevue: back.querySelector("#f_datelivraison").value || null,
+          lignes, createdAt: todayIso(), createdBy: actingUserName()
+        });
+        await logAudit("Création commande", numero, "");
+        close(); toast("Commande créée."); renderView();
+      });
+    }
+  });
+}
+
+async function openCommandeDetail(id){
+  const [c, fournisseurs] = await Promise.all([getOne("commandes", id), getAll("fournisseurs")]);
+  const f = fournisseurs.find(x=>x.id===c.fournisseurId);
+  const lignesHtml = (c.lignes||[]).map((l,i)=>
+    '<tr><td>'+esc(l.reference)+" — "+esc(l.designation)+'</td><td class="num mono">'+l.qteCommandee+'</td>'+
+    '<td class="num"><input type="number" data-recv="'+i+'" value="'+(l.qteRecue||0)+'" style="width:80px;" '+(c.statut==="soldee"?"disabled":"")+'></td>'+
+    '<td class="num mono">'+fmtMoney(l.prixUnitaire)+"</td></tr>"
+  ).join("");
+  const body =
+    '<p class="muted" style="margin-top:0;">Fournisseur : <b>'+esc(f?f.nom:"—")+'</b> · Statut : '+pill(c.statut)+"</p>"+
+    '<table class="lines-table"><thead><tr><th>Référence</th><th>Commandé</th><th>Reçu</th><th>P.U.</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
+    (c.statut!=="soldee" ? '<div class="callout"><span class="lbl">Réception</span><p>Indiquez la quantité effectivement reçue par ligne, puis validez : le stock et le coût moyen sont mis à jour automatiquement.</p></div>' : "");
+  const footHtml = c.statut!=="soldee"
+    ? '<button class="btn ghost" id="cl">Fermer</button><button class="btn primary" id="receive">Valider la réception</button>'
+    : '<button class="btn" id="cl">Fermer</button>';
+  openModal("Commande "+c.numero, body, {
+    wide:true, footHtml,
+    onMount(back, close){
+      back.querySelector("#cl").addEventListener("click", close);
+      const btn = back.querySelector("#receive");
+      if(btn) btn.addEventListener("click", async ()=>{
+        const inputs = back.querySelectorAll("[data-recv]");
+        const lignes = JSON.parse(JSON.stringify(c.lignes||[]));
+        for(const inp of inputs){
+          const i = Number(inp.getAttribute("data-recv"));
+          const qte = Number(inp.value)||0;
+          const already = lignes[i].qteRecue||0;
+          const delta = qte - already;
+          lignes[i].qteRecue = qte;
+          if(delta!==0 && lignes[i].articleId){
+            const artRef = state.db.doc("articles/"+lignes[i].articleId);
+            const snap = await artRef.get();
+            if(snap.exists){
+              const art = snap.data();
+              const oldQte = Number(art.stockQte)||0;
+              const oldPrix = Number(art.prixAchat)||0;
+              const nouveauPrix = delta>0 ? (((oldQte*oldPrix) + (delta*lignes[i].prixUnitaire)) / Math.max(1,(oldQte+delta))) : oldPrix;
+              await artRef.update({ prixAchat: Math.round(nouveauPrix*100)/100 });
+              await ajusterStock(lignes[i].articleId, delta, delta>0?"entree":"ajustement", "commande", c.numero, "Réception commande");
+            }
+          }
+        }
+        const totalCommande = lignes.reduce((s,l)=>s+l.qteCommandee,0);
+        const totalRecu = lignes.reduce((s,l)=>s+(l.qteRecue||0),0);
+        const statut = totalRecu<=0 ? c.statut : (totalRecu>=totalCommande ? "soldee" : "recue_partielle");
+        await state.db.doc("commandes/"+c.id).update({ lignes, statut });
+        await logAudit("Réception commande", c.numero, "");
+        close(); toast("Réception enregistrée."); renderView();
+      });
+    }
+  });
+}
+
+/* ---- Devis ------------------------------------------------------------ */
+VIEWS.devis = async function(view){
+  const [devis, vehicules] = await Promise.all([getAll("devis"), getAll("vehicules")]);
+  devis.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Devis pièces et main d\'œuvre, convertibles en facture sans ressaisie.</p></div>'+
+      '<button class="btn primary" id="newDevis">+ Nouveau devis</button></div>'+
+    '<div class="toolbar"><input type="search" id="devSearch" placeholder="Rechercher un n°, une immatriculation…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Date</th><th class="num">Montant</th><th>Statut</th></tr></thead><tbody id="tb"></tbody></table></div>';
+  function draw(){
+    const t = document.getElementById("devSearch").value.toLowerCase();
+    const rows = devis.filter(d=>{
+      const veh = vehicules.find(v=>v.id===d.vehiculeId);
+      return !t || (d.numero||"").toLowerCase().includes(t) || (veh&&veh.immatriculation||"").toLowerCase().includes(t);
+    });
+    document.getElementById("tb").innerHTML = rows.length ? rows.map(d=>{
+      const veh = vehicules.find(v=>v.id===d.vehiculeId);
+      const total = (d.lignes||[]).reduce((s,l)=>s+computeLigneMontant(l),0);
+      return '<tr class="clickable" data-id="'+d.id+'"><td class="mono">'+esc(d.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+fmtDate(d.date)+'</td><td class="num mono">'+fmtMoney(total)+'</td><td>'+pill(d.statut)+"</td></tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="5">Aucun devis ne correspond.</td></tr>';
+    document.querySelectorAll("#tb [data-id]").forEach(tr=>tr.addEventListener("click", ()=>openDevisDetail(tr.getAttribute("data-id"))));
+  }
+  draw();
+  document.getElementById("devSearch").addEventListener("input", draw);
+  document.getElementById("newDevis").addEventListener("click", ()=>openDevisForm(vehicules));
+};
+
+function openDevisForm(vehicules){
+  const items = [];
+  const body =
+    '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+    '<div class="field"><label>Lignes</label><div id="linesBox"></div></div>';
+  const { close } = openModal("Nouveau devis", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer le devis</button>',
+    async onMount(back, close){
+      const [articles, techniciens] = await Promise.all([getAll("articles"), getAll("techniciens")]);
+      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens });
+      const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
+        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const vehiculeId = vehPicker.getValue();
+        if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
+        const lignes = editor.getItems();
+        if(!lignes.length){ toast("Ajoutez au moins une ligne.", "danger"); return; }
+        const numero = await nextNumero("devis","DEV");
+        await state.db.collection("devis").add({
+          numero, vehiculeId, statut:"brouillon", date: todayIso(), lignes,
+          createdAt: todayIso(), createdBy: actingUserName()
+        });
+        await logAudit("Création devis", numero, "");
+        close(); toast("Devis créé."); renderView();
+      });
+    }
+  });
+}
+
+async function openDevisDetail(id){
+  const [d, vehicules] = await Promise.all([getOne("devis", id), getAll("vehicules")]);
+  const veh = vehicules.find(v=>v.id===d.vehiculeId);
+  const total = (d.lignes||[]).reduce((s,l)=>s+computeLigneMontant(l),0);
+  const lignesHtml = (d.lignes||[]).map(l=>
+    '<tr><td>'+(l.type==="main_oeuvre"?'<span class="faint">Main d\'œuvre</span> — ':"")+esc(l.designation||l.reference)+'</td><td class="num mono">'+l.quantite+'</td><td class="num mono">'+fmtMoney(l.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(computeLigneMontant(l))+"</td></tr>"
+  ).join("");
+  const body =
+    '<p class="muted" style="margin-top:0;">Véhicule : <b class="mono">'+esc(veh?veh.immatriculation:"—")+'</b> · Statut : '+pill(d.statut)+" · Date : "+fmtDate(d.date)+"</p>"+
+    '<table class="lines-table"><thead><tr><th>Ligne</th><th>Qté</th><th>P.U.</th><th>Montant</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
+    '<div class="lines-total"><span class="muted">Total devis</span><b>'+fmtMoney(total)+"</b></div>"+
+    (d.factureId ? '<div class="callout"><span class="lbl">Converti</span><p>Ce devis a été converti directement en facture.</p></div>' : "")+
+    (d.orId ? '<div class="callout"><span class="lbl">À l\'atelier</span><p>Ce devis a été envoyé à l\'atelier sous forme d\'ordre de réparation.</p></div>' : "");
+
+  const statusButtons = [];
+  if(!d.factureId && !d.orId){
+    if(d.statut==="brouillon") statusButtons.push('<button class="btn" id="toEnvoye">Marquer envoyé</button>');
+    if(d.statut==="envoye"){ statusButtons.push('<button class="btn" id="toAccepte">Marquer accepté</button>'); statusButtons.push('<button class="btn danger" id="toRefuse">Marquer refusé</button>'); }
+    statusButtons.push('<button class="btn" id="toAtelier">Envoyer à l\'atelier</button>');
+    statusButtons.push('<button class="btn primary" id="toFacture">Facturer directement</button>');
+  }
+  openModal("Devis "+d.numero, body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cl">Fermer</button>'+statusButtons.join(""),
+    onMount(back, close){
+      back.querySelector("#cl").addEventListener("click", close);
+      const setStatut = (s)=> async ()=>{ await state.db.doc("devis/"+d.id).update({statut:s}); close(); renderView(); };
+      const teB = back.querySelector("#toEnvoye"); if(teB) teB.addEventListener("click", setStatut("envoye"));
+      const taB = back.querySelector("#toAccepte"); if(taB) taB.addEventListener("click", setStatut("accepte"));
+      const trB = back.querySelector("#toRefuse"); if(trB) trB.addEventListener("click", setStatut("refuse"));
+      const tf = back.querySelector("#toFacture");
+      if(tf) tf.addEventListener("click", async ()=>{
+        const ok = await askConfirm("Convertir le devis "+d.numero+" en facture ? Les pièces seront décomptées du stock.", "Convertir");
+        if(!ok) return;
+        const lignes = (d.lignes||[]).map(l=>({...l, montant: computeLigneMontant(l)}));
+        const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
+        const numero = await nextNumero("facture","FAC");
+        const factureRef = await state.db.collection("factures").add({
+          numero, devisId:d.id, orId:null, vehiculeId:d.vehiculeId, date: todayIso(),
+          lignes, montantTotal, montantRegle:0, statutPaiement:"impayee", reglements:[],
+          createdAt: todayIso(), createdBy: actingUserName()
+        });
+        for(const l of lignes){
+          if(l.type!=="main_oeuvre" && l.articleId){
+            await ajusterStock(l.articleId, -Math.abs(l.quantite||0), "sortie", "facture", numero, "Vente sur devis "+d.numero);
+          }
+        }
+        await state.db.doc("devis/"+d.id).update({ statut:"accepte", factureId: factureRef.id });
+        await logAudit("Conversion devis en facture", d.numero+" → "+numero, "");
+        close(); toast("Facture "+numero+" créée."); setView("facture-detail", { id: factureRef.id });
+      });
+      const toAt = back.querySelector("#toAtelier");
+      if(toAt) toAt.addEventListener("click", async ()=>{
+        const ok = await askConfirm("Envoyer le devis "+d.numero+" à l'atelier ? Un ordre de réparation sera créé avec ses pièces (sorties du stock immédiatement) ; la facture sera générée à la clôture de l'OR, une fois les réparations terminées.", "Envoyer à l'atelier");
+        if(!ok) return;
+        const lignes = d.lignes||[];
+        const numero = await nextNumero("or","OR");
+        const pieces = lignes.filter(l=>l.type!=="main_oeuvre" && l.articleId).map(l=>({
+          articleId:l.articleId, reference:l.reference, designation:l.designation, quantite:l.quantite, prixUnitaire:l.prixUnitaire
+        }));
+        const moAvecTech = lignes.filter(l=>l.type==="main_oeuvre" && l.technicienId);
+        const moSansTech = lignes.filter(l=>l.type==="main_oeuvre" && !l.technicienId);
+        const interventions = moAvecTech.map(l=>({
+          id: Math.random().toString(36).slice(2), technicienId:l.technicienId, technicienNom:l.technicienNom, metier:l.metier,
+          description:l.designation, montant:Number(l.prixUnitaire)||0, date: todayIso()
+        }));
+        const orRef = await state.db.collection("ordres").add({
+          numero, vehiculeId:d.vehiculeId, statut:"ouvert", dateOuverture: todayIso(), dateCloture:null,
+          km:null, technicienIds: interventions.map(i=>i.technicienId), pieces, interventions, factureId:null,
+          devisId: d.id, createdAt: todayIso(), createdBy: actingUserName()
+        });
+        for(const p of pieces){
+          await ajusterStock(p.articleId, -Math.abs(p.quantite||0), "sortie", "or", numero, "Pose sur "+numero+" (depuis devis "+d.numero+")");
+        }
+        await state.db.doc("devis/"+d.id).update({ statut:"accepte", orId: orRef.id });
+        await logAudit("Envoi devis vers atelier", d.numero+" → "+numero, "");
+        close();
+        toast(moSansTech.length ? "OR "+numero+" créé — "+moSansTech.length+" ligne(s) de main d'œuvre sans technicien à ajouter manuellement." : "OR "+numero+" créé.");
+        setView("atelier-detail", { id: orRef.id });
+      });
+    }
+  });
+}
+
+/* ---- Factures ---------------------------------------------------------- */
+VIEWS.factures = async function(view, params){
+  const [factures, vehicules] = await Promise.all([getAll("factures"), getAll("vehicules")]);
+  factures.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const initialFilter = (params && params.filter) || "";
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Toutes les factures émises, avec suivi des règlements.</p></div>'+
+      '<div class="row-actions"><button class="btn primary" id="newFacture">+ Facture directe</button></div></div>'+
+    '<div class="toolbar"><input type="search" id="facSearch" placeholder="Rechercher un n°, une immatriculation…"><select id="filtStatut">'+
+      '<option value="">Tous statuts</option>'+
+      '<option value="dues">Impayées + partielles</option>'+
+      ["impayee","partielle","payee","annulee"].map(s=>'<option value="'+s+'">'+PILL_LABELS[s]+"</option>").join("")+
+    "</select></div>"+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Date</th><th class="num">Total</th><th class="num">Reste dû</th><th>Statut</th></tr></thead><tbody id="tb"></tbody></table></div>';
+
+  function draw(){
+    const filter = document.getElementById("filtStatut").value;
+    const text = document.getElementById("facSearch").value.toLowerCase();
+    const rows = factures.filter(f=>{
+      const veh = vehicules.find(v=>v.id===f.vehiculeId);
+      const statusOk = !filter || (filter==="dues" ? (f.statutPaiement==="impayee"||f.statutPaiement==="partielle") : f.statutPaiement===filter);
+      const textOk = !text || (f.numero||"").toLowerCase().includes(text) || (veh&&veh.immatriculation||"").toLowerCase().includes(text);
+      return statusOk && textOk;
+    });
+    document.getElementById("tb").innerHTML = rows.length ? rows.map(f=>{
+      const veh = vehicules.find(v=>v.id===f.vehiculeId);
+      const reste = Math.max(0,(f.montantTotal||0)-(f.montantRegle||0));
+      return '<tr class="clickable" data-id="'+f.id+'"><td class="mono">'+esc(f.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+fmtDate(f.date)+'</td><td class="num mono">'+fmtMoney(f.montantTotal)+'</td><td class="num mono">'+fmtMoney(reste)+'</td><td>'+pill(f.statutPaiement)+"</td></tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="6">Aucune facture ne correspond.</td></tr>';
+    document.querySelectorAll("#tb [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("facture-detail",{id:tr.getAttribute("data-id")})));
+  }
+  document.getElementById("filtStatut").value = initialFilter;
+  draw();
+  document.getElementById("filtStatut").addEventListener("change", draw);
+  document.getElementById("facSearch").addEventListener("input", draw);
+  document.getElementById("newFacture").addEventListener("click", async ()=>openFactureDirecteForm(await getAll("vehicules")));
+};
+
+function openFactureDirecteForm(vehicules){
+  const items = [];
+  const body =
+    '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+    '<div class="field"><label>Lignes</label><div id="linesBox"></div></div>';
+  const { close } = openModal("Nouvelle facture directe", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Créer la facture</button>',
+    async onMount(back, close){
+      const [articles, techniciens] = await Promise.all([getAll("articles"), getAll("techniciens")]);
+      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens });
+      const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
+        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const vehiculeId = vehPicker.getValue();
+        if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
+        const lignes = editor.getItems().map(l=>({...l, montant: computeLigneMontant(l)}));
+        if(!lignes.length){ toast("Ajoutez au moins une ligne.", "danger"); return; }
+        const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
+        const numero = await nextNumero("facture","FAC");
+        const ref = await state.db.collection("factures").add({
+          numero, devisId:null, orId:null, vehiculeId, date: todayIso(),
+          lignes, montantTotal, montantRegle:0, statutPaiement:"impayee", reglements:[],
+          createdAt: todayIso(), createdBy: actingUserName()
+        });
+        for(const l of lignes){
+          if(l.type!=="main_oeuvre" && l.articleId) await ajusterStock(l.articleId, -Math.abs(l.quantite||0), "sortie", "facture", numero, "Vente directe");
+        }
+        await logAudit("Création facture directe", numero, "");
+        close(); toast("Facture "+numero+" créée."); setView("facture-detail",{id:ref.id});
+      });
+    }
+  });
+}
+
+VIEWS["facture-detail"] = async function(view, params){
+  const f = await getOne("factures", params.id);
+  if(!f){ view.innerHTML='<p class="faint">Facture introuvable.</p>'; return; }
+  const veh = await getOne("vehicules", f.vehiculeId);
+  const reste = Math.max(0,(f.montantTotal||0)-(f.montantRegle||0));
+  const lignesHtml = (f.lignes||[]).map(l=>
+    '<tr><td>'+(l.type==="main_oeuvre"?'<span class="faint">Main d\'œuvre</span> — ':"")+esc(l.designation||l.reference)+'</td><td class="num mono">'+l.quantite+'</td><td class="num mono">'+fmtMoney(l.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(l.montant!=null?l.montant:computeLigneMontant(l))+"</td></tr>"
+  ).join("");
+  const reglementsHtml = (f.reglements||[]).map(r=>
+    '<tr><td>'+fmtDate(r.date)+'</td><td>'+esc(r.mode)+'</td><td>'+esc(r.reference||"—")+'</td><td>'+esc(r.utilisateur)+'</td><td class="num mono">'+fmtMoney(r.montant)+"</td></tr>"
+  ).join("");
+
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour aux factures</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.5rem;">Facture '+esc(f.numero)+'</h2>'+
+      '<p class="lede">Véhicule <a href="#" id="vehLink" class="mono">'+esc(veh?veh.immatriculation:"—")+'</a> · '+fmtDate(f.date)+'</p></div>'+
+      '<div>'+pill(f.statutPaiement)+"</div></div>"+
+    '<div class="detail-grid">'+
+      '<div>'+
+        '<table class="lines-table"><thead><tr><th>Ligne</th><th>Qté</th><th>P.U.</th><th>Montant</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
+        '<div class="lines-total"><span class="muted">Total facture</span><b>'+fmtMoney(f.montantTotal)+"</b></div>"+
+        '<h3 class="section-title">Règlements</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th>Saisi par</th><th class="num">Montant</th></tr></thead><tbody>'+
+          (reglementsHtml || '<tr class="empty-row"><td colspan="5">Aucun règlement enregistré.</td></tr>')+
+        "</tbody></table></div>"+
+      "</div>"+
+      '<div>'+
+        '<div class="card"><h3>Solde</h3><dl class="kv">'+
+          '<dt>Total</dt><dd class="mono">'+fmtMoney(f.montantTotal)+"</dd>"+
+          '<dt>Réglé</dt><dd class="mono">'+fmtMoney(f.montantRegle)+"</dd>"+
+          '<dt>Reste dû</dt><dd class="mono" style="color:'+(reste>0?"var(--danger)":"var(--good)")+';">'+fmtMoney(reste)+"</dd>"+
+        "</dl>"+
+        (f.statutPaiement!=="annulee" && reste>0 ? '<button class="btn primary" id="addReg" style="margin-top:14px; width:100%;">Ajouter un règlement</button>' : "")+
+        "</div>"+
+        (f.statutPaiement!=="annulee" ? '<button class="btn danger" id="cancelFac" style="width:100%;">Annuler la facture</button>' : '<div class="callout danger"><span class="lbl">Annulée</span><p>Cette facture a été annulée et ne compte plus dans les montants dus.</p></div>')+
+      "</div>"+
+    "</div>";
+
+  view.querySelector("#back").addEventListener("click", ()=>setView("factures"));
+  const vl = view.querySelector("#vehLink");
+  if(vl && veh) vl.addEventListener("click", e=>{ e.preventDefault(); setView("vehicule-detail",{id:veh.id}); });
+  const addRegBtn = view.querySelector("#addReg");
+  if(addRegBtn) addRegBtn.addEventListener("click", ()=>openReglementForm(f, reste));
+  const cancelBtn = view.querySelector("#cancelFac");
+  if(cancelBtn) cancelBtn.addEventListener("click", async ()=>{
+    if(!isAdmin()){ toast("Seul un administrateur peut annuler une facture émise.", "danger"); return; }
+    const ok = await askConfirm("Annuler définitivement la facture "+f.numero+" ? Cette action est tracée dans le journal.", "Annuler la facture");
+    if(!ok) return;
+    if(!f.orId){
+      for(const l of (f.lignes||[])){
+        if(l.type!=="main_oeuvre" && l.articleId) await ajusterStock(l.articleId, Math.abs(l.quantite||0), "entree", "annulation_facture", f.numero, "Annulation facture");
+      }
+    }
+    await state.db.doc("factures/"+f.id).update({ statutPaiement:"annulee" });
+    await logAudit("Annulation facture", f.numero, "Reste dû annulé : "+fmtMoney(reste));
+    toast("Facture annulée."); setView("facture-detail",{id:f.id});
+  });
+};
+
+function openReglementForm(facture, resteDefault){
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Montant</label><input id="f_montant" type="number" value="'+resteDefault+'"></div>'+
+      '<div class="field"><label>Date</label><input id="f_date" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Mode de paiement</label><select id="f_mode">'+
+        ["Espèces","Virement","Mobile money","Chèque"].map(m=>'<option value="'+m+'">'+m+"</option>").join("")+
+      "</select></div>"+
+      '<div class="field"><label>Référence (optionnel)</label><input id="f_refpay" placeholder="N° de transaction, chèque…"></div>'+
+    "</div>";
+  const { close } = openModal("Ajouter un règlement — "+facture.numero, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const montant = Number(back.querySelector("#f_montant").value);
+        if(!montant || montant<=0){ toast("Montant invalide.", "danger"); return; }
+        const reglement = {
+          date: back.querySelector("#f_date").value || todayIso(),
+          montant, mode: back.querySelector("#f_mode").value,
+          reference: back.querySelector("#f_refpay").value.trim(),
+          utilisateur: actingUserName()
+        };
+        const reglements = [...(facture.reglements||[]), reglement];
+        const montantRegle = (facture.montantRegle||0) + montant;
+        const statutPaiement = statutPaiement2(facture.montantTotal, montantRegle);
+        await state.db.doc("factures/"+facture.id).update({ reglements, montantRegle, statutPaiement });
+        await logAudit("Règlement facture", facture.numero, fmtMoney(montant)+" ("+reglement.mode+")");
+        close(); toast("Règlement enregistré."); setView("facture-detail",{id:facture.id});
+      });
+    }
+  });
+}
+function statutPaiement2(total, regle){ return statutPaiement(total, regle); }
+
+/* ---- Atelier / Ordres de réparation ------------------------------------ */
+VIEWS.atelier = async function(view, params){
+  const [ordres, vehicules] = await Promise.all([getAll("ordres"), getAll("vehicules")]);
+  ordres.sort((a,b)=>new Date(b.dateOuverture)-new Date(a.dateOuverture));
+  const initialFilter = (params && params.filter) || "";
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Ordres de réparation : véhicule, techniciens, pièces posées, main d\'œuvre.</p></div>'+
+      '<button class="btn primary" id="newOR">+ Nouvel ordre de réparation</button></div>'+
+    '<div class="toolbar"><input type="search" id="orSearch" placeholder="Rechercher un n°, une immatriculation…"><select id="filtStatut">'+
+      '<option value="">Tous statuts</option><option value="ouvert">Ouvert</option><option value="cloture">Clôturé</option>'+
+    "</select></div>"+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Ouverture</th><th>Statut</th><th class="num">Pièces</th><th class="num">Interventions</th></tr></thead><tbody id="tb"></tbody></table></div>';
+
+  function draw(){
+    const filter = document.getElementById("filtStatut").value;
+    const text = document.getElementById("orSearch").value.toLowerCase();
+    const rows = ordres.filter(o=>{
+      const veh = vehicules.find(v=>v.id===o.vehiculeId);
+      const statusOk = !filter || o.statut===filter;
+      const textOk = !text || (o.numero||"").toLowerCase().includes(text) || (veh&&veh.immatriculation||"").toLowerCase().includes(text);
+      return statusOk && textOk;
+    });
+    document.getElementById("tb").innerHTML = rows.length ? rows.map(o=>{
+      const veh = vehicules.find(v=>v.id===o.vehiculeId);
+      return '<tr class="clickable" data-id="'+o.id+'"><td class="mono">'+esc(o.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+fmtDate(o.dateOuverture)+'</td><td>'+pill(o.statut)+'</td><td class="num">'+(o.pieces||[]).length+'</td><td class="num">'+(o.interventions||[]).length+"</td></tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="6">Aucun ordre de réparation ne correspond.</td></tr>';
+    document.querySelectorAll("#tb [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-id")})));
+  }
+  document.getElementById("filtStatut").value = initialFilter;
+  draw();
+  document.getElementById("filtStatut").addEventListener("change", draw);
+  document.getElementById("orSearch").addEventListener("input", draw);
+  document.getElementById("newOR").addEventListener("click", ()=>openOrForm(vehicules));
+};
+
+function openOrForm(vehicules){
+  const body =
+    '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+    '<div class="field"><label>Kilométrage à l\'entrée</label><input id="f_km" type="number"></div>';
+  const { close } = openModal("Nouvel ordre de réparation", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Ouvrir l\'OR</button>',
+    onMount(back, close){
+      const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
+        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const vehiculeId = vehPicker.getValue();
+        if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
+        const numero = await nextNumero("or","OR");
+        const ref = await state.db.collection("ordres").add({
+          numero, vehiculeId, statut:"ouvert", dateOuverture: todayIso(), dateCloture:null,
+          km: Number(back.querySelector("#f_km").value)||null, technicienIds:[],
+          pieces:[], interventions:[], factureId:null,
+          createdAt: todayIso(), createdBy: actingUserName()
+        });
+        await logAudit("Ouverture OR", numero, "");
+        close(); toast("Ordre de réparation ouvert."); setView("atelier-detail",{id:ref.id});
+      });
+    }
+  });
+}
+
+VIEWS["atelier-detail"] = async function(view, params){
+  const o = await getOne("ordres", params.id);
+  if(!o){ view.innerHTML='<p class="faint">Ordre introuvable.</p>'; return; }
+  const [veh, techniciens] = await Promise.all([getOne("vehicules", o.vehiculeId), getAll("techniciens")]);
+  const totalPieces = (o.pieces||[]).reduce((s,p)=>s+(p.quantite*p.prixUnitaire),0);
+  const totalMO = (o.interventions||[]).reduce((s,i)=>s+(Number(i.montant)||0),0);
+
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour à l\'atelier</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.5rem;">OR '+esc(o.numero)+'</h2>'+
+      '<p class="lede">Véhicule <a href="#" id="vehLink" class="mono">'+esc(veh?veh.immatriculation:"—")+'</a> · Ouvert le '+fmtDate(o.dateOuverture)+"</p></div>"+
+      '<div>'+pill(o.statut)+"</div></div>"+
+    '<div class="kpi-grid">'+
+      '<div class="kpi"><div class="lbl">Pièces posées</div><div class="val">'+fmtMoney(totalPieces)+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Main d\'œuvre</div><div class="val">'+fmtMoney(totalMO)+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Total intervention</div><div class="val">'+fmtMoney(totalPieces+totalMO)+"</div></div>"+
+    "</div>"+
+    '<div class="detail-grid">'+
+      '<div>'+
+        '<h3 class="section-title">Pièces posées</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Qté</th><th class="num">P.U.</th><th class="num">Montant</th></tr></thead><tbody>'+
+          ((o.pieces||[]).length ? o.pieces.map(p=>'<tr><td>'+esc(p.reference)+" — "+esc(p.designation)+'</td><td class="num mono">'+p.quantite+'</td><td class="num mono">'+fmtMoney(p.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(p.quantite*p.prixUnitaire)+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="4">Aucune pièce posée.</td></tr>')+
+        "</tbody></table></div>"+
+        (o.statut==="ouvert" ? '<button class="btn small" id="addPiece">+ Ajouter une pièce (sort du stock immédiatement)</button>' : "")+
+        '<h3 class="section-title">Main d\'œuvre</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Technicien</th><th>Métier</th><th>Description</th><th class="num">Montant</th></tr></thead><tbody>'+
+          ((o.interventions||[]).length ? o.interventions.map(i=>'<tr><td>'+esc(i.technicienNom)+'</td><td>'+esc(METIERS[i.metier]||i.metier)+'</td><td>'+esc(i.description)+'</td><td class="num mono">'+fmtMoney(i.montant)+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="4">Aucune intervention enregistrée.</td></tr>')+
+        "</tbody></table></div>"+
+        (o.statut==="ouvert" ? '<button class="btn small" id="addInterv">+ Ajouter une intervention (montant libre)</button>' : "")+
+      "</div>"+
+      '<div>'+
+        (o.statut==="ouvert"
+          ? '<div class="card"><h3>Clôture</h3><p class="muted">La clôture génère automatiquement la facture du véhicule à partir des pièces et interventions ci-contre.</p><button class="btn primary" id="closeOr" style="width:100%;">Clôturer &amp; facturer</button></div>'
+          : '<div class="callout"><span class="lbl">Clôturé</span><p>OR clôturé le '+fmtDate(o.dateCloture)+(o.factureId?" — facture générée.":"")+"</p></div>"
+        )+
+      "</div>"+
+    "</div>";
+
+  view.querySelector("#back").addEventListener("click", ()=>setView("atelier"));
+  const vl = view.querySelector("#vehLink");
+  if(vl && veh) vl.addEventListener("click", e=>{e.preventDefault(); setView("vehicule-detail",{id:veh.id});});
+
+  const addPieceBtn = view.querySelector("#addPiece");
+  if(addPieceBtn) addPieceBtn.addEventListener("click", async ()=>openAddPieceToOr(o));
+  const addIntervBtn = view.querySelector("#addInterv");
+  if(addIntervBtn) addIntervBtn.addEventListener("click", ()=>openAddInterventionToOr(o, techniciens));
+  const closeBtn = view.querySelector("#closeOr");
+  if(closeBtn) closeBtn.addEventListener("click", async ()=>{
+    if(!(o.pieces||[]).length && !(o.interventions||[]).length){ toast("Ajoutez au moins une pièce ou une intervention avant de clôturer.", "danger"); return; }
+    const ok = await askConfirm("Clôturer l'OR "+o.numero+" et générer la facture du véhicule ?", "Clôturer & facturer");
+    if(!ok) return;
+    const lignes = [
+      ...(o.pieces||[]).map(p=>({ type:"piece", articleId:p.articleId, reference:p.reference, designation:p.designation, quantite:p.quantite, prixUnitaire:p.prixUnitaire, montant:p.quantite*p.prixUnitaire })),
+      ...(o.interventions||[]).map(i=>({ type:"main_oeuvre", designation:i.description+" ("+(METIERS[i.metier]||i.metier)+" — "+i.technicienNom+")", quantite:1, prixUnitaire:i.montant, montant:i.montant }))
+    ];
+    const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
+    const numero = await nextNumero("facture","FAC");
+    const factureRef = await state.db.collection("factures").add({
+      numero, devisId:null, orId:o.id, vehiculeId:o.vehiculeId, date: todayIso(),
+      lignes, montantTotal, montantRegle:0, statutPaiement: montantTotal<=0?"payee":"impayee", reglements:[],
+      createdAt: todayIso(), createdBy: actingUserName()
+    });
+    await state.db.doc("ordres/"+o.id).update({ statut:"cloture", dateCloture: todayIso(), factureId: factureRef.id });
+    await logAudit("Clôture OR", o.numero, "Facture "+numero+" générée");
+    toast("OR clôturé, facture "+numero+" créée."); setView("facture-detail",{id:factureRef.id});
+  });
+};
+
+async function openAddPieceToOr(o){
+  const articles = await getAll("articles");
+  const body =
+    '<div class="field"><label>Référence</label><div id="artSlot"></div></div>'+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Quantité</label><input id="f_qte" type="number" value="1"></div>'+
+      '<div class="field"><label>Prix unitaire</label><input id="f_pu" type="number" value="0"></div>'+
+    "</div>"+
+    '<div class="callout amber"><span class="lbl">Anti-vol</span><p>La pièce sort du stock immédiatement à l\'ajout — chaque sortie est journalisée avec l\'OR d\'origine.</p></div>';
+  const { close } = openModal("Ajouter une pièce à l'OR "+o.numero, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Ajouter (sortie de stock)</button>',
+    onMount(back, close){
+      const artPicker = mountSearchableSelect(back.querySelector("#artSlot"), {
+        items: articles, getId:a=>a.id, getLabel:a=>a.reference+" — "+a.designation+" (dispo "+(a.stockQte||0)+")",
+        placeholder:"Rechercher une référence…",
+        onChange:(id)=>{ const a = articles.find(x=>x.id===id); if(a) back.querySelector("#f_pu").value = a.prixVente; }
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const articleId = artPicker.getValue();
+        const art = articles.find(x=>x.id===articleId);
+        if(!art){ toast("Choisissez une référence.", "danger"); return; }
+        const quantite = Number(back.querySelector("#f_qte").value)||0;
+        const prixUnitaire = Number(back.querySelector("#f_pu").value)||0;
+        if(quantite<=0){ toast("Quantité invalide.", "danger"); return; }
+        if(quantite > (art.stockQte||0)){ toast("Stock insuffisant ("+(art.stockQte||0)+" disponible).", "danger"); return; }
+        const pieces = [...(o.pieces||[]), { articleId, reference:art.reference, designation:art.designation, quantite, prixUnitaire }];
+        await state.db.doc("ordres/"+o.id).update({ pieces });
+        await ajusterStock(articleId, -quantite, "sortie", "or", o.numero, "Pose sur "+o.numero);
+        close(); toast("Pièce ajoutée à l'OR."); setView("atelier-detail",{id:o.id});
+      });
+    }
+  });
+}
+
+function openAddInterventionToOr(o, techniciens){
+  const body =
+    '<div class="field"><label>Technicien</label><div id="techSlot"></div></div>'+
+    '<div class="field"><label>Description de la prestation</label><input id="f_desc" placeholder="Ex. remplacement plaquettes avant"></div>'+
+    '<div class="field"><label>Montant (fixé librement)</label><input id="f_montant" type="number" value="0"></div>';
+  const { close } = openModal("Ajouter une intervention à l'OR "+o.numero, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Ajouter</button>',
+    onMount(back, close){
+      const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
+        items: techniciens, getId:t=>t.id, getLabel:t=>t.nom+" — "+(METIERS[t.metier]||t.metier), placeholder:"Rechercher un technicien…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const tech = techniciens.find(t=>t.id===techPicker.getValue());
+        if(!tech){ toast("Choisissez un technicien.", "danger"); return; }
+        const description = back.querySelector("#f_desc").value.trim();
+        const montant = Number(back.querySelector("#f_montant").value)||0;
+        if(!description){ toast("Décrivez la prestation.", "danger"); return; }
+        const interventions = [...(o.interventions||[]), {
+          id: Math.random().toString(36).slice(2), technicienId:tech.id, technicienNom:tech.nom, metier:tech.metier,
+          description, montant, date: todayIso()
+        }];
+        await state.db.doc("ordres/"+o.id).update({ interventions });
+        close(); toast("Intervention ajoutée."); setView("atelier-detail",{id:o.id});
+      });
+    }
+  });
+}
+
+/* ---- Techniciens & synthèse mensuelle ---------------------------------- */
+VIEWS.techniciens = async function(view){
+  const techniciens = await getAll("techniciens");
+  view.innerHTML =
+    '<div class="tabs"><button class="active" data-tab="liste">Techniciens</button><button data-tab="synthese">Synthèse mensuelle</button></div>'+
+    '<div id="tabBody"></div>';
+  function drawListe(){
+    document.getElementById("tabBody").innerHTML =
+      '<div class="view-head"><div><p class="lede">Techniciens de l\'atelier, par métier.</p></div><button class="btn primary" id="newTech">+ Technicien</button></div>'+
+      '<div class="toolbar"><input type="search" id="techSearch" placeholder="Rechercher un technicien…"></div>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Métier</th><th>Téléphone</th></tr></thead><tbody id="techTbody"></tbody></table></div>';
+    function draw(){
+      const t = document.getElementById("techSearch").value.toLowerCase();
+      const rows = techniciens.filter(x=>!t || (x.nom||"").toLowerCase().includes(t) || (METIERS[x.metier]||"").toLowerCase().includes(t));
+      document.getElementById("techTbody").innerHTML = rows.length ? rows.map(x=>'<tr><td>'+esc(x.nom)+'</td><td>'+esc(METIERS[x.metier]||x.metier)+'</td><td>'+esc(x.telephone||"—")+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="3">Aucun technicien ne correspond.</td></tr>';
+    }
+    draw();
+    document.getElementById("techSearch").addEventListener("input", draw);
+    document.getElementById("newTech").addEventListener("click", ()=>openTechnicienForm());
+  }
+  async function drawSynthese(){
+    const [ordres, factures] = await Promise.all([getAll("ordres"), getAll("factures")]);
+    const now = new Date();
+    const monthDefault = now.toISOString().slice(0,7);
+    document.getElementById("tabBody").innerHTML =
+      '<div class="view-head"><div><p class="lede">Total des montants de main d\'œuvre par technicien, pour la paie de fin de mois — ordres de réparation et factures directes confondus.</p></div>'+
+        '<div class="row-actions"><input type="month" id="monthPick" value="'+monthDefault+'"><button class="btn" id="exportCsv">Exporter en CSV</button></div></div>'+
+      '<div id="syntheseBody"></div>';
+    function renderMonth(month){
+      const [y,m] = month.split("-").map(Number);
+      const rows = [];
+      ordres.forEach(o=>{
+        (o.interventions||[]).forEach(i=>{
+          const d = new Date(i.date);
+          if(d.getFullYear()===y && (d.getMonth()+1)===m){
+            rows.push({ technicien:i.technicienNom, metier: METIERS[i.metier]||i.metier, or:o.numero, description:i.description, date:i.date, montant:Number(i.montant)||0 });
+          }
+        });
+      });
+      /* Main-d'œuvre facturée hors OR (devis converti directement, ou facture
+         comptoir) : comptée ici seulement quand un technicien est assigné et
+         qu'aucun OR n'a déjà porté cette même ligne (orId null), pour éviter
+         un double comptage avec la boucle ci-dessus. */
+      factures.forEach(f=>{
+        if(f.orId || f.statutPaiement==="annulee") return;
+        (f.lignes||[]).forEach(l=>{
+          if(l.type!=="main_oeuvre" || !l.technicienId) return;
+          const d = new Date(f.date);
+          if(d.getFullYear()===y && (d.getMonth()+1)===m){
+            rows.push({ technicien:l.technicienNom, metier: METIERS[l.metier]||l.metier||"", or:f.numero, description:l.designation, date:f.date, montant:Number(l.montant!=null?l.montant:computeLigneMontant(l))||0 });
+          }
+        });
+      });
+      const parTech = {};
+      rows.forEach(r=>{ parTech[r.technicien] = (parTech[r.technicien]||0) + r.montant; });
+      const totalGeneral = rows.reduce((s,r)=>s+r.montant,0);
+      document.getElementById("syntheseBody").innerHTML =
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Technicien</th><th class="num">Nb. interventions</th><th class="num">Total dû</th></tr></thead><tbody>'+
+          (Object.keys(parTech).length ? Object.entries(parTech).sort((a,b)=>b[1]-a[1]).map(([nom,total])=>
+            '<tr><td>'+esc(nom)+'</td><td class="num">'+rows.filter(r=>r.technicien===nom).length+'</td><td class="num mono">'+fmtMoney(total)+"</td></tr>"
+          ).join("") : '<tr class="empty-row"><td colspan="3">Aucune intervention ce mois-ci.</td></tr>')+
+          '<tr><td colspan="2" style="font-weight:700;">Total général</td><td class="num mono" style="font-weight:700;">'+fmtMoney(totalGeneral)+"</td></tr>"+
+        "</tbody></table></div>"+
+        '<h3 class="section-title">Détail des interventions</h3>'+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>Technicien</th><th>OR</th><th>Description</th><th class="num">Montant</th></tr></thead><tbody>'+
+          (rows.length ? rows.sort((a,b)=>new Date(a.date)-new Date(b.date)).map(r=>
+            '<tr><td>'+fmtDate(r.date)+'</td><td>'+esc(r.technicien)+'</td><td class="mono">'+esc(r.or)+'</td><td>'+esc(r.description)+'</td><td class="num mono">'+fmtMoney(r.montant)+"</td></tr>"
+          ).join("") : '<tr class="empty-row"><td colspan="5">—</td></tr>')+
+        "</tbody></table></div>";
+      document.getElementById("exportCsv").onclick = ()=>{
+        let csv = "Technicien;Metier;OR;Description;Date;Montant\n";
+        rows.forEach(r=>{ csv += [r.technicien,r.metier,r.or,r.description.replace(/;/g,","),fmtDate(r.date),r.montant].join(";")+"\n"; });
+        downloadFile("synthese-main-oeuvre-"+month+".csv", csv);
+        toast("Export téléchargé.");
+      };
+    }
+    renderMonth(monthDefault);
+    document.getElementById("monthPick").addEventListener("change", e=>renderMonth(e.target.value));
+  }
+  drawListe();
+  view.querySelectorAll(".tabs button").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      view.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      if(b.getAttribute("data-tab")==="liste") drawListe(); else drawSynthese();
+    });
+  });
+};
+
+function openTechnicienForm(){
+  const body =
+    '<div class="field"><label>Nom</label><input id="f_nom"></div>'+
+    '<div class="field"><label>Métier</label><select id="f_metier">'+
+      Object.entries(METIERS).map(([k,v])=>'<option value="'+k+'">'+v+"</option>").join("")+
+    "</select></div>"+
+    '<div class="field"><label>Téléphone</label><input id="f_tel"></div>';
+  const { close } = openModal("Nouveau technicien", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const nom = back.querySelector("#f_nom").value.trim();
+        if(!nom){ toast("Le nom est obligatoire.", "danger"); return; }
+        await state.db.collection("techniciens").add({ nom, metier: back.querySelector("#f_metier").value, telephone: back.querySelector("#f_tel").value.trim() });
+        close(); toast("Technicien ajouté."); renderView();
+      });
+    }
+  });
+}
+
+/* ---- Comptage de stock -------------------------------------------------- */
+VIEWS.comptage = async function(view){
+  const articles = await getAll("articles");
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Comptage tournant : saisissez la quantité physique trouvée, les écarts sont mis en évidence avant validation.</p></div></div>'+
+    '<div class="callout"><span class="lbl">Principe</span><p>Aucun ajustement n\'est appliqué tant que le comptage n\'est pas validé — et seul un administrateur peut valider un écart.</p></div>'+
+    '<div class="toolbar"><input type="search" id="cptSearch" placeholder="Rechercher une référence…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Stock théorique</th><th class="num">Quantité comptée</th><th class="num">Écart</th></tr></thead><tbody id="tb"></tbody></table></div>'+
+    '<button class="btn primary" id="validate">Valider le comptage</button>';
+  document.getElementById("tb").innerHTML = articles.map(a=>
+    '<tr data-row="'+a.id+'"><td>'+esc(a.reference)+" — "+esc(a.designation)+'</td><td class="num mono">'+(a.stockQte||0)+'</td>'+
+    '<td class="num"><input type="number" data-count="'+a.id+'" value="'+(a.stockQte||0)+'" style="width:90px;"></td>'+
+    '<td class="num mono" data-ecart="'+a.id+'">0</td></tr>'
+  ).join("");
+  document.getElementById("cptSearch").addEventListener("input", (e)=>{
+    const t = e.target.value.toLowerCase();
+    document.querySelectorAll("[data-row]").forEach(tr=>{
+      const a = articles.find(x=>x.id===tr.getAttribute("data-row"));
+      tr.style.display = (!t || (a.reference||"").toLowerCase().includes(t) || (a.designation||"").toLowerCase().includes(t)) ? "" : "none";
+    });
+  });
+  document.querySelectorAll("[data-count]").forEach(inp=>{
+    inp.addEventListener("input", ()=>{
+      const id = inp.getAttribute("data-count");
+      const a = articles.find(x=>x.id===id);
+      const ecart = Number(inp.value) - (a.stockQte||0);
+      const cell = document.querySelector('[data-ecart="'+id+'"]');
+      cell.textContent = (ecart>0?"+":"")+ecart;
+      cell.style.color = ecart!==0 ? "var(--danger)" : "var(--ink-muted)";
+    });
+  });
+  document.getElementById("validate").addEventListener("click", async ()=>{
+    if(!isAdmin()){ toast("Seul un administrateur peut valider un comptage.", "danger"); return; }
+    const lignes = [];
+    let ecartsCount = 0;
+    document.querySelectorAll("[data-count]").forEach(inp=>{
+      const id = inp.getAttribute("data-count");
+      const a = articles.find(x=>x.id===id);
+      const compte = Number(inp.value)||0;
+      const ecart = compte - (a.stockQte||0);
+      if(ecart!==0) ecartsCount++;
+      lignes.push({ articleId:id, reference:a.reference, stockTheorique:a.stockQte||0, stockCompte:compte, ecart });
+    });
+    const ok = await askConfirm(ecartsCount+" écart(s) détecté(s). Valider et ajuster le stock en conséquence ?", "Valider");
+    if(!ok) return;
+    for(const l of lignes){
+      if(l.ecart!==0) await ajusterStock(l.articleId, l.ecart, "ajustement", "comptage", "—", "Comptage du "+fmtDate(todayIso()));
+    }
+    await state.db.collection("comptages").add({ date: todayIso(), statut:"valide", lignes, validePar: actingUserName(), dateValidation: todayIso() });
+    await logAudit("Validation comptage", "", ecartsCount+" écart(s)");
+    toast("Comptage validé, stock ajusté."); renderView();
+  });
+};
+
+/* ---- Journal ------------------------------------------------------------ */
+VIEWS.journal = async function(view){
+  const [mouvements, audit] = await Promise.all([getAll("mouvements"), getAll("audit")]);
+  const events = [
+    ...mouvements.map(m=>({ date:m.date, type:"Mouvement de stock", detail: m.reference+" · "+m.type+" · "+(m.quantite>0?"+":"")+m.quantite+" · "+(m.documentNumero||""), utilisateur:m.utilisateur })),
+    ...audit.map(a=>({ date:a.date, type:a.action, detail:a.cible+(a.detail?" — "+a.detail:""), utilisateur:a.acteur }))
+  ].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,300);
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Journal d\'audit — traçabilité complète des mouvements de stock et actions sensibles.</p></div></div>'+
+    '<div class="toolbar"><input type="search" id="jSearch" placeholder="Rechercher un événement, une référence, un utilisateur…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>Événement</th><th>Détail</th><th>Utilisateur</th></tr></thead><tbody id="tb"></tbody></table></div>';
+  function draw(){
+    const t = document.getElementById("jSearch").value.toLowerCase();
+    const rows = events.filter(e=>!t || [e.type,e.detail,e.utilisateur].some(x=>(x||"").toLowerCase().includes(t)));
+    document.getElementById("tb").innerHTML = rows.length ? rows.map(e=>'<tr><td>'+fmtDateTime(e.date)+'</td><td>'+esc(e.type)+'</td><td>'+esc(e.detail)+'</td><td>'+esc(e.utilisateur)+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="4">Aucun événement ne correspond.</td></tr>';
+  }
+  draw();
+  document.getElementById("jSearch").addEventListener("input", draw);
+};
+
+/* ---- Paramètres ---------------------------------------------------------- */
+VIEWS.parametres = async function(view){
+  if(!isAdmin()){
+    view.innerHTML = '<div class="callout danger"><span class="lbl">Accès restreint</span><p>Paramètres est réservé aux administrateurs.</p></div>';
+    return;
+  }
+  const utilisateurs = await getAll("utilisateurs");
+  utilisateurs.sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">Comptes d\'accès et paramètres généraux de PartsFlow.</p></div></div>'+
+    '<div class="callout"><span class="lbl">Créer un compte</span><p>Se fait en deux étapes : d\'abord dans Supabase (Authentication → Users → Add user, avec un email <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. Révoquer un accès, en revanche, se fait entièrement ici — décoche « Compte actif » et la personne est déconnectée en quelques secondes, où qu\'elle soit.</p></div>'+
+    '<div class="card"><h3>Devise</h3><div class="field" style="max-width:200px;"><input id="f_devise" value="'+esc(state.config.devise)+'"></div><button class="btn" id="saveDevise">Enregistrer</button></div>'+
+    '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Comptes ('+utilisateurs.length+')</h3><button class="btn primary" id="newUser">+ Utilisateur</button></div>'+
+    '<div class="toolbar"><input type="search" id="userSearch" placeholder="Rechercher un compte…"></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Onglets</th><th>Statut</th><th></th></tr></thead><tbody id="userTbody"></tbody></table></div>';
+
+  function draw(filter){
+    const f = (filter||"").toLowerCase();
+    const rows = utilisateurs.filter(u=>!f || (u.nom||"").toLowerCase().includes(f) || (u.identifiant||"").toLowerCase().includes(f));
+    document.getElementById("userTbody").innerHTML = rows.length ? rows.map(u=>{
+      const tabsLabel = u.role==="admin" ? "Tous" : ((u.tabs&&u.tabs.length) ? u.tabs.map(k=>(NAV.find(n=>n.key===k)||{}).label||k).join(", ") : "Aucun");
+      return '<tr>'+
+        '<td>'+esc(u.nom)+(u.id===state.actingUser.id?' <span class="faint">(vous)</span>':'')+'</td>'+
+        '<td class="mono">'+esc(u.identifiant||"—")+'</td>'+
+        '<td><span class="rolebadge '+esc(u.role)+'">'+esc(ROLES[u.role]||u.role)+'</span></td>'+
+        '<td class="faint" style="max-width:260px;">'+esc(tabsLabel)+'</td>'+
+        '<td>'+(u.active===false?'<span class="rolebadge revoked">Révoqué</span>':'<span class="rolebadge agent" style="background:var(--good-soft); color:var(--good);">Actif</span>')+'</td>'+
+        '<td class="row-actions"><button class="btn small" data-edit="'+u.id+'">Modifier</button></td>'+
+      '</tr>';
+    }).join("") : '<tr class="empty-row"><td colspan="6">Aucun compte ne correspond.</td></tr>';
+    document.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openUtilisateurForm(utilisateurs.find(u=>u.id===b.getAttribute("data-edit")))));
+  }
+  draw("");
+  document.getElementById("userSearch").addEventListener("input", e=>draw(e.target.value));
+  document.getElementById("newUser").addEventListener("click", ()=>openUtilisateurForm());
+  document.getElementById("saveDevise").addEventListener("click", async ()=>{
+    const devise = document.getElementById("f_devise").value.trim() || "FCFA";
+    await state.db.doc("config/general").set({ devise });
+    state.config.devise = devise;
+    toast("Devise mise à jour."); renderView();
+  });
+};
+
+function openUtilisateurForm(existing){
+  const u = existing || { role:"agent", tabs: DEFAULT_AGENT_TABS, active:true };
+  const tabsHtml = ASSIGNABLE_TABS.map(key=>{
+    const label = (NAV.find(n=>n.key===key)||{}).label || key;
+    return '<label><input type="checkbox" value="'+key+'" '+((u.tabs||[]).includes(key)?"checked":"")+'> '+esc(label)+'</label>';
+  }).join("");
+  const body =
+    (existing ? "" : '<div class="callout"><span class="lbl">Étape 1</span><p>Crée d\'abord le compte de connexion dans Supabase : <b>Authentication → Users → Add user</b>. Mets un email au format <span class="mono">identifiant@cambouis.local</span> (ex. <span class="mono">jkouassi@cambouis.local</span>), coche <b>Auto Confirm User</b>, choisis un mot de passe et donne-le à la personne concernée. Copie ensuite le <b>User UID</b> généré et colle-le ci-dessous.</p></div>')+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Nom</label><input id="f_nom" value="'+esc(u.nom||"")+'"></div>'+
+      '<div class="field"><label>Identifiant</label><input id="f_ident" value="'+esc(u.identifiant||"")+'" placeholder="ex. jkouassi" autocomplete="off" '+(existing?"disabled":"")+'></div>'+
+    '</div>'+
+    (existing ? "" : '<div class="field"><label>User UID Supabase</label><input id="f_uid" placeholder="ex. af546bdc-ada8-47b4-81c8-819236e9d252" autocomplete="off"></div>')+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Rôle</label><select id="f_role">'+
+        Object.entries(ROLES).map(([k,v])=>'<option value="'+k+'" '+(u.role===k?"selected":"")+'>'+v+"</option>").join("")+
+      "</select></div>"+
+      (existing ? '<div class="field"><label>Statut</label><label class="checkbox-row" style="margin-top:9px;"><input type="checkbox" id="f_active" '+(u.active!==false?"checked":"")+'> Compte actif (décochez pour révoquer)</label></div>' : '<div></div>')+
+    "</div>"+
+    '<div class="field" id="tabsField"><label>Onglets accessibles (agent uniquement — un administrateur voit tout)</label><div class="tabs-grid">'+tabsHtml+'</div></div>'+
+    (existing ? '<p class="faint" style="margin-top:10px;">Pour changer le mot de passe de ce compte, fais-le dans Supabase : Authentication → Users → (le compte) → Reset password.</p>' : "");
+  const { close } = openModal(existing ? "Modifier le compte" : "Nouvel utilisateur", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      const roleSel = back.querySelector("#f_role");
+      const tabsField = back.querySelector("#tabsField");
+      function syncTabsVisibility(){ tabsField.style.display = roleSel.value==="admin" ? "none" : ""; }
+      syncTabsVisibility();
+      roleSel.addEventListener("change", syncTabsVisibility);
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const nom = back.querySelector("#f_nom").value.trim();
+        const identifiant = back.querySelector("#f_ident").value.trim().toLowerCase();
+        if(!nom){ toast("Le nom est obligatoire.", "danger"); return; }
+        if(!/^[a-z0-9._-]{3,20}$/.test(identifiant)){ toast("L'identifiant doit contenir 3 à 20 caractères (lettres, chiffres, . _ -).", "danger"); return; }
+        const role = roleSel.value;
+        const tabs = Array.from(back.querySelectorAll('#tabsField input[type=checkbox]:checked')).map(c=>c.value);
+        const data = { nom, identifiant, role, tabs };
+        if(existing){
+          const activeInput = back.querySelector("#f_active");
+          data.active = activeInput.checked;
+          if(existing.id===state.actingUser.id && role!=="admin"){ toast("Vous ne pouvez pas retirer votre propre statut administrateur.", "danger"); return; }
+          if(existing.id===state.actingUser.id && !activeInput.checked){ toast("Vous ne pouvez pas révoquer votre propre compte.", "danger"); return; }
+          try{
+            await state.db.doc("utilisateurs/"+existing.id).update(data);
+          }catch(e){ toast("Erreur : "+e.message, "danger"); return; }
+          await logAudit("Modification compte", nom, role);
+        } else {
+          const uid = back.querySelector("#f_uid").value.trim();
+          if(!/^[0-9a-f-]{20,40}$/i.test(uid)){ toast("Colle le User UID Supabase du compte créé à l'étape 1.", "danger"); return; }
+          data.active = true;
+          try{
+            await state.db.doc("utilisateurs/"+uid).set(data);
+          }catch(e){ toast("Erreur : "+e.message+" — vérifie que le UID est correct et que l'identifiant n'est pas déjà pris.", "danger"); return; }
+          await logAudit("Création compte", nom, role);
+        }
+        close(); toast("Compte enregistré."); renderView();
+      });
+    }
+  });
+}
+
+/* ---------------------------------------------------------------- session
+   Real authentication now: Supabase Auth holds the password (hashed,
+   server-side), identified internally by "<identifiant>@cambouis.local"
+   since Supabase's auth system is email-shaped and staff don't need a
+   real inbox. The `profiles` row (role, tabs, active) is looked up right
+   after sign-in and re-checked live via Realtime, so an admin revoking a
+   session in Paramètres logs that person out within seconds. */
+let profileChannel = null;
+function showApp(){
+  document.getElementById("loginScreen").hidden = true;
+  document.getElementById("loginScreen").innerHTML = "";
+  document.getElementById("app").hidden = false;
+}
+function showLogin(message){
+  if(profileChannel){ sb.removeChannel(profileChannel); profileChannel = null; }
+  document.getElementById("app").hidden = true;
+  document.getElementById("loginScreen").hidden = false;
+  renderLoginScreen(message);
+}
+async function logout(message){
+  if(profileChannel){ sb.removeChannel(profileChannel); profileChannel = null; }
+  state.actingUser = null;
+  try{ await sb.auth.signOut(); }catch(e){}
+  showLogin(message);
+}
+function watchProfile(userId){
+  if(profileChannel) sb.removeChannel(profileChannel);
+  profileChannel = sb.channel("profile-"+userId)
+    .on("postgres_changes", { event:"*", schema:"public", table:"profiles", filter:"id=eq."+userId }, (payload)=>{
+      if(payload.eventType === "DELETE" || payload.new.active===false){
+        logout("Votre accès a été révoqué par un administrateur.");
+        return;
+      }
+      state.actingUser = rowToCamel(payload.new);
+      renderNav();
+      renderTopbarUser();
+    })
+    .subscribe();
+}
+function renderTopbarUser(){
+  const box = document.getElementById("topbarUser");
+  if(!state.actingUser){ box.innerHTML = ""; return; }
+  box.innerHTML =
+    '<span class="topbar-user"><span class="name">'+esc(state.actingUser.nom)+'</span>'+
+    '<span class="rolebadge '+esc(state.actingUser.role)+'">'+esc(ROLES[state.actingUser.role]||state.actingUser.role)+'</span>'+
+    '<button class="btn small ghost" id="logoutBtn">Déconnexion</button></span>';
+  box.querySelector("#logoutBtn").addEventListener("click", ()=> logout());
+}
+async function enterApp(authUser){
+  const profile = await getOne("utilisateurs", authUser.id);
+  if(!profile || profile.active===false){
+    await logout("Ce compte n'a pas (ou plus) accès à PartsFlow. Contactez un administrateur.");
+    return;
+  }
+  state.actingUser = profile;
+  watchProfile(authUser.id);
+  showApp();
+  renderTopbarUser();
+  const hash = location.hash.replace("#","");
+  const [name, id] = hash.split("/");
+  const initial = (NAV.find(n=>n.key===name) && hasTab(name)) ? name : (NAV.find(n=>hasTab(n.key))||{key:"dashboard"}).key;
+  state.view = { name: initial, params: id ? {id} : {} };
+  renderNav();
+  renderView();
+}
+function renderLoginScreen(message){
+  const screen = document.getElementById("loginScreen");
+  screen.innerHTML =
+    '<div class="login-card">'+
+      '<div class="brand" style="justify-content:center;"><span class="mark"></span><span>PartsFlow</span></div>'+
+      '<div class="brand-sub">Connexion</div>'+
+      (message ? '<div class="login-msg">'+esc(message)+'</div>' : '')+
+      '<div class="field"><label>Identifiant</label><input id="loginId" autocomplete="username" autofocus></div>'+
+      '<div class="field"><label>Mot de passe</label><input id="loginPw" type="password" autocomplete="current-password"></div>'+
+      '<div class="login-error" id="loginErr" hidden></div>'+
+      '<button class="btn primary" id="loginBtn" style="width:100%; margin-top:6px;">Se connecter</button>'+
+    '</div>';
+  const idInput = screen.querySelector("#loginId");
+  const pwInput = screen.querySelector("#loginPw");
+  const err = screen.querySelector("#loginErr");
+  idInput.focus();
+  async function attempt(){
+    const identifiant = idInput.value.trim().toLowerCase();
+    const password = pwInput.value;
+    if(!identifiant || !password) return;
+    err.hidden = true;
+    const { data, error } = await sb.auth.signInWithPassword({ email: identifiant + AUTH_EMAIL_DOMAIN, password });
+    if(error || !data.user){
+      err.hidden = false; err.textContent = "Identifiant ou mot de passe incorrect.";
+      pwInput.value = ""; pwInput.focus();
+      return;
+    }
+    try{
+      await enterApp(data.user);
+    }catch(e){
+      console.error(e);
+      err.hidden = false; err.textContent = "Erreur après connexion : " + (e.message||e);
+    }
+  }
+  screen.querySelector("#loginBtn").addEventListener("click", attempt);
+  pwInput.addEventListener("keydown", e=>{ if(e.key==="Enter") attempt(); });
+  idInput.addEventListener("keydown", e=>{ if(e.key==="Enter") pwInput.focus(); });
+}
+
+/* -------------------------------------------------------------- bootstrap */
+async function init(){
+  state.db = makeDbShim(sb);
+  try{
+    const cfg = await getOne("config","general");
+    if(cfg && cfg.devise) state.config.devise = cfg.devise;
+  }catch(e){}
+
+  const { data: { session } } = await sb.auth.getSession();
+  if(session && session.user){
+    try{
+      await enterApp(session.user);
+    }catch(e){
+      console.error(e);
+      showLogin("Erreur au chargement : " + (e.message||e));
+    }
+  } else {
+    showLogin();
+  }
+}
+init();
+})();
+</script>
+</body>
+</html>
