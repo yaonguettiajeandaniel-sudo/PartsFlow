@@ -172,6 +172,15 @@
   .card h3{font-size:1.02rem; margin-bottom:14px;}
   .card.danger{border-color:var(--danger);}
 
+  .manual .toc{display:flex; flex-wrap:wrap; gap:6px 16px; padding:12px 14px; margin-bottom:20px; background:var(--faint-soft); border-radius:var(--radius); font-size:0.84rem;}
+  .manual .toc a{color:var(--accent-ink); text-decoration:none;}
+  .manual .toc a:hover{text-decoration:underline;}
+  .manual h4{font-size:0.94rem; margin:16px 0 6px; color:var(--ink);}
+  .manual p{margin:0 0 10px; line-height:1.55;}
+  .manual ul, .manual ol{margin:0 0 12px; padding-left:22px; line-height:1.55;}
+  .manual li{margin-bottom:4px;}
+  .manual .section-title:first-of-type{margin-top:0;}
+
   .table-wrap{overflow-x:auto; border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); margin-bottom:20px;}
   table.grid{border-collapse:collapse; width:100%; min-width:520px; background:var(--surface); font-size:0.86rem;}
   table.grid thead th{
@@ -2519,7 +2528,7 @@ VIEWS.parametres = async function(view){
   const utilisateurs = await getAll("utilisateurs");
   utilisateurs.sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
   view.innerHTML =
-    '<div class="view-head"><div><p class="lede">Comptes d\'accès et paramètres généraux de PartsFlow.</p></div></div>'+
+    '<div class="view-head"><div><p class="lede">Comptes d\'accès et paramètres généraux de PartsFlow.</p></div><button class="btn" id="openManuel">Manuel d\'utilisation</button></div>'+
     '<div class="callout"><span class="lbl">Créer un compte</span><p>Se fait en deux étapes : d\'abord dans Supabase (Authentication → Users → Add user, avec un email <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. Révoquer un accès, en revanche, se fait entièrement ici — décoche « Compte actif » et la personne est déconnectée en quelques secondes, où qu\'elle soit.</p></div>'+
     '<div class="card"><h3>Général</h3>'+
       '<div class="field-row" style="grid-template-columns:2fr 1fr 1fr;">'+
@@ -2565,6 +2574,123 @@ VIEWS.parametres = async function(view){
     toast("Paramètres enregistrés."); renderView();
   });
   document.getElementById("resetAll").addEventListener("click", ()=> openResetConfirm());
+  document.getElementById("openManuel").addEventListener("click", ()=> setView("manuel"));
+};
+
+/* ---- Manuel d'utilisation ------------------------------------------------
+   Page de référence statique, module par module. Accessible depuis Paramètres
+   ("Manuel d'utilisation") ; pas ajoutée à NAV pour ne pas devenir un onglet
+   à part entière, mais la vue reste ouvrable directement via son hash. */
+const MANUEL_SECTIONS = [
+  { id:"connexion", title:"Connexion et rôles", html:`
+    <p>Chaque personne se connecte avec un identifiant et un mot de passe personnels — il n'y a pas de compte partagé, pour que toute action reste tracée dans le <a href="#m-journal">journal</a>.</p>
+    <p>Deux rôles existent :</p>
+    <ul>
+      <li><b>Administrateur</b> : accès à tous les onglets, y compris Paramètres, la suppression définitive de documents et la réinitialisation.</li>
+      <li><b>Agent</b> : accès seulement aux onglets choisis par un administrateur pour ce compte (onglet Paramètres toujours masqué).</li>
+    </ul>
+    <p>Un administrateur peut révoquer un accès à tout moment depuis Paramètres — la personne est déconnectée automatiquement en quelques secondes, même si elle est déjà en train d'utiliser l'application.</p>
+  `},
+  { id:"dashboard", title:"Tableau de bord", html:`
+    <p>Vue d'ensemble de l'atelier. Chaque chiffre est cliquable et amène directement au détail correspondant.</p>
+    <p><b>Première ligne :</b> véhicules suivis, total dû par la flotte (factures non soldées), valeur du stock au coût d'achat, références sous seuil, ordres de réparation ouverts.</p>
+    <p><b>Deuxième ligne — état de la flotte :</b></p>
+    <ul>
+      <li><b>Immobilisés</b> : véhicules actuellement au statut "Immobilisé".</li>
+      <li><b>En réparation</b> : véhicules ayant un ordre de réparation ouvert.</li>
+      <li><b>En attente de prise en charge</b> : immobilisés mais pas encore en réparation — ce chiffre correspond exactement à la file de l'onglet <a href="#m-triage">Prise en charge</a>.</li>
+      <li><b>Réparés cette semaine / ce mois-ci</b> : ordres de réparation clôturés depuis lundi, et depuis le 1er du mois.</li>
+    </ul>
+    <p>En bas : les véhicules avec le plus d'impayés, et les références sous seuil à réapprovisionner en priorité.</p>
+  `},
+  { id:"vehicules", title:"Véhicules", html:`
+    <p>Liste complète de la flotte, avec recherche par immatriculation, chauffeur, marque, groupe ou type. Cliquer une ligne ouvre la fiche du véhicule (historique des factures et des ordres de réparation, dépenses cumulées).</p>
+    <p><b>Statut d'un véhicule :</b></p>
+    <ul>
+      <li><b>Actif</b> : en circulation normale.</li>
+      <li><b>Immobilisé</b> : à l'arrêt pour réparation. Un <b>motif</b> devient alors obligatoire — Mécanique, Tôlerie, Peinture ou Documents administratifs — accompagné d'une précision libre des éléments concernés (ex. « plaquettes avant, pare-choc arrière »). Ces informations servent à préparer le devis et à commander les bonnes pièces sans attendre.</li>
+      <li><b>Sorti de flotte</b> : véhicule qui n'est plus suivi.</li>
+    </ul>
+    <p>Depuis la fiche d'un véhicule immobilisé, le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le détail, à compléter avec les références de pièces nécessaires.</p>
+    <p><b>Import CSV :</b> le bouton "Importer CSV" propose un modèle avec les colonnes attendues (immatriculation, marque, modèle, groupe, type, contrat, chauffeur, téléphone, statut). Les en-têtes sont reconnus même avec des variantes d'accents ou de casse.</p>
+  `},
+  { id:"stock", title:"Stock / Catalogue", html:`
+    <p>Référentiel des pièces : référence, désignation, famille, prix d'achat et de vente, quantité en stock, seuil d'alerte, emplacement.</p>
+    <p>Une référence sous son seuil est mise en évidence et remonte dans les alertes du tableau de bord. Le stock est modifié automatiquement par trois mécanismes seulement : la réception d'une commande fournisseur, la sortie de pièces sur un devis/OR/facture, et la validation d'un comptage — jamais en modifiant la quantité à la main sur la fiche article, pour garder une traçabilité complète des mouvements.</p>
+    <p><b>Import CSV</b> disponible pour charger un catalogue existant.</p>
+  `},
+  { id:"achats", title:"Achats (fournisseurs et commandes)", html:`
+    <p>La liste des fournisseurs (nom, téléphone, délai de livraison habituel) et les commandes passées auprès d'eux.</p>
+    <p>Une nouvelle commande liste les pièces commandées, quantité et prix unitaire. À la réception, on saisit la quantité réellement reçue par ligne : le stock est augmenté d'autant et le coût moyen d'achat de l'article est recalculé automatiquement.</p>
+    <p>Une commande peut être marquée <b>urgente</b> (badge rouge, remontée en tête de liste) — c'est automatique lorsqu'elle est créée depuis la fiche d'un véhicule immobilisé ou depuis l'onglet <a href="#m-triage">Prise en charge</a>, mais la case peut aussi être cochée manuellement.</p>
+  `},
+  { id:"devis", title:"Devis", html:`
+    <p>Un devis regroupe les pièces et prestations de main d'œuvre proposées pour un véhicule, avec une durée estimée de réparation en jours.</p>
+    <p><b>Cycle de vie :</b> Brouillon → Envoyé → Accepté ou Refusé. Un devis accepté peut ensuite être :</p>
+    <ul>
+      <li><b>Envoyé à l'atelier</b> : crée un ordre de réparation, les pièces sont sorties du stock immédiatement, la facture sera générée à la clôture de l'OR.</li>
+      <li><b>Converti directement en facture</b> : pour une réparation rapide sans passer par un ordre de réparation formel.</li>
+    </ul>
+    <p>Le montant de la main d'œuvre est toujours fixé librement ligne par ligne (jamais calculé automatiquement), avec assignation optionnelle à un technicien.</p>
+    <p>Un administrateur peut <b>supprimer définitivement</b> un devis (utile pour nettoyer des essais) — action irréversible, à distinguer d'un devis simplement marqué "Refusé".</p>
+  `},
+  { id:"atelier", title:"Atelier (ordres de réparation)", html:`
+    <p>Un ordre de réparation (OR) naît de l'envoi d'un devis à l'atelier, ou peut être ouvert directement pour un véhicule. Tant qu'il est <b>ouvert</b>, on peut :</p>
+    <ul>
+      <li>Ajouter des pièces — sorties du stock au moment de l'ajout, pas à la clôture.</li>
+      <li>Ajouter des interventions de main d'œuvre — description libre, montant fixé librement, technicien assigné.</li>
+    </ul>
+    <p>À la clôture de l'OR, la facture correspondante est générée automatiquement avec l'ensemble des pièces et interventions.</p>
+    <p>Le nombre d'OR ouverts en même temps est comparé à la <b>capacité de l'atelier</b> (réglable dans Paramètres) pour alimenter les recommandations de l'onglet <a href="#m-triage">Prise en charge</a>.</p>
+  `},
+  { id:"factures", title:"Factures", html:`
+    <p>Chaque facture indique le total, le montant réglé et le reste dû, avec un statut : Impayée, Partielle ou Payée (calculé automatiquement selon les règlements saisis).</p>
+    <p>Le bouton <b>Imprimer / PDF</b> ouvre la boîte d'impression du navigateur — choisir "Enregistrer en PDF" comme imprimante pour obtenir un fichier.</p>
+    <p><b>Annuler</b> une facture la sort des totaux dus sans la faire disparaître (utile en cas d'erreur commerciale). <b>Supprimer définitivement</b> (administrateur uniquement) l'efface complètement de la base — réservé au nettoyage de données de test, à ne jamais utiliser sur une vraie facture déjà communiquée au client.</p>
+  `},
+  { id:"triage", title:"Prise en charge (Triage)", html:`
+    <p>Cette file d'attente aide à décider quels véhicules immobilisés peuvent démarrer en réparation maintenant. Elle est basée sur le <b>statut réel des véhicules</b> : elle se met donc à jour automatiquement dès qu'un véhicule passe à "Immobilisé" ou en ressort — inutile de faire quoi que ce soit d'autre pour qu'elle reflète la réalité du terrain.</p>
+    <p>Chaque véhicule immobilisé (et pas déjà en réparation) apparaît avec une recommandation :</p>
+    <ul>
+      <li><b>Peut être pris en charge</b> : les pièces nécessaires sont disponibles en stock et l'atelier a une place libre. Le bouton "Envoyer à l'atelier" ouvre directement le devis correspondant.</li>
+      <li><b>Bloqué</b> : une ou plusieurs pièces du devis manquent en stock — le détail précise lesquelles et en quelle quantité. Le bouton <b>Commande urgente</b> pré-remplit alors une commande fournisseur avec exactement les références et quantités manquantes.</li>
+      <li><b>Atelier complet</b> : les pièces sont disponibles mais aucune place n'est libre (capacité atelier atteinte).</li>
+      <li><b>Devis à préparer</b> : le véhicule est immobilisé mais n'a pas encore de devis accepté en attente — le motif et le détail d'immobilisation renseignés sur la fiche véhicule apparaissent ici pour guider la préparation du devis. Un bouton <b>Créer un devis</b> ouvre directement le formulaire avec ce véhicule déjà sélectionné.</li>
+    </ul>
+    <p>Le bouton <b>+ Nouveau devis</b> en haut de la page permet de créer un devis pour n'importe quel véhicule sans quitter cet onglet.</p>
+    <p>Cette recommandation reste une aide à la décision : le chef d'atelier garde toujours la main pour envoyer un devis à l'atelier même si le stock ou la capacité manquent.</p>
+  `},
+  { id:"techniciens", title:"Techniciens", html:`
+    <p>Fiche par technicien : nom, métier, téléphone, statut. Le statut permet de <b>sanctionner ou licencier un technicien sans jamais perdre son historique</b> :</p>
+    <ul>
+      <li><b>Actif</b> : peut être assigné à de nouvelles interventions.</li>
+      <li><b>Suspendu</b> / <b>Licencié</b> : la fiche reste, avec un motif et une date optionnels. Le statut apparaît simplement entre parenthèses partout où son nom est proposé (listes d'assignation), mais toutes ses interventions passées restent visibles et comptent normalement dans la synthèse mensuelle.</li>
+    </ul>
+    <p>La <b>synthèse mensuelle</b> (deuxième onglet de cette page) additionne, par technicien, tous les montants de main d'œuvre du mois choisi — ordres de réparation et factures directes confondus — pour préparer la paie. Export CSV disponible.</p>
+  `},
+  { id:"comptage", title:"Comptage de stock", html:`
+    <p>Comptage tournant : on saisit la quantité physiquement trouvée pour chaque référence, l'écart avec le stock théorique est mis en évidence. Aucun ajustement n'est appliqué au stock tant que le comptage n'est pas validé, et seul un administrateur peut valider un comptage présentant des écarts.</p>
+  `},
+  { id:"journal", title:"Journal", html:`
+    <p>Historique de toutes les actions sensibles (créations, modifications, suppressions, sanctions, réinitialisation…) avec la date, l'auteur et son rôle. C'est la première chose à consulter en cas de question sur "qui a fait quoi".</p>
+  `},
+  { id:"parametres", title:"Paramètres", html:`
+    <p>Réservé aux administrateurs.</p>
+    <p><b>Comptes :</b> la création se fait en deux étapes — d'abord dans Supabase (Authentication → Users → Add user, avec un email au format <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. La révocation, elle, se fait entièrement ici en décochant "Compte actif".</p>
+    <p><b>Général :</b> nom de l'entreprise (affiché en en-tête des documents imprimés), devise, et capacité de l'atelier (nombre d'ordres de réparation ouverts en parallèle) utilisée par l'onglet Prise en charge.</p>
+    <p><b>Zone dangereuse :</b> le bouton "Réinitialiser l'application" vide véhicules, stock, fournisseurs, achats, devis, factures, ordres de réparation, mouvements de stock, comptages et journal, et remet les numéros de documents à 1. Les comptes utilisateurs, les fiches techniciens et les paramètres généraux ne sont pas touchés. Cette action est irréversible : il faut taper le mot <span class="mono">REINITIALISER</span> dans la fenêtre de confirmation pour l'activer, afin d'éviter tout clic accidentel.</p>
+  `},
+];
+
+VIEWS.manuel = async function(view){
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour aux paramètres</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.6rem;">Manuel d\'utilisation</h2><p class="lede">Guide de PartsFlow, module par module.</p></div></div>'+
+    '<div class="manual">'+
+      '<nav class="toc">'+MANUEL_SECTIONS.map(s=>'<a href="#m-'+s.id+'">'+esc(s.title)+'</a>').join("")+'</nav>'+
+      MANUEL_SECTIONS.map(s=>'<h3 class="section-title" id="m-'+s.id+'">'+esc(s.title)+'</h3>'+s.html).join("")+
+    '</div>';
+  view.querySelector("#back").addEventListener("click", ()=>setView("parametres"));
 };
 
 /* ---- Réinitialisation complète (admin) ---------------------------------
