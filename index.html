@@ -170,6 +170,7 @@
 
   .card{background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); padding:18px 20px; margin-bottom:20px;}
   .card h3{font-size:1.02rem; margin-bottom:14px;}
+  .card.danger{border-color:var(--danger);}
 
   .table-wrap{overflow-x:auto; border:1px solid var(--line); box-shadow:var(--shadow); border-radius:var(--radius); margin-bottom:20px;}
   table.grid{border-collapse:collapse; width:100%; min-width:520px; background:var(--surface); font-size:0.86rem;}
@@ -193,7 +194,8 @@
   .pill.brouillon{background:var(--faint-soft); color:var(--ink-muted);}
   .pill.envoye, .pill.envoyee{background:var(--accent-soft); color:var(--accent-ink);}
   .pill.accepte, .pill.ouvert, .pill.actif{background:var(--good-soft); color:var(--good);}
-  .pill.refuse, .pill.immobilise{background:var(--danger-soft); color:var(--danger);}
+  .pill.refuse, .pill.immobilise, .pill.licencie{background:var(--danger-soft); color:var(--danger);}
+  .pill.suspendu{background:var(--amber-soft); color:var(--amber);}
   .pill.cloture, .pill.soldee{background:var(--faint-soft); color:var(--ink-muted);}
 
   .badge-low{background:var(--danger-soft); color:var(--danger); padding:1px 7px; border-radius:100px; font-size:0.7rem; font-weight:700;}
@@ -550,6 +552,19 @@ const MOTIFS_INACTIVITE = {
   administratif: "Documents administratifs",
 };
 
+const TECHNICIEN_STATUTS = {
+  actif: "Actif",
+  suspendu: "Suspendu",
+  licencie: "Licencié",
+};
+// Historique conservé même après sanction/licenciement : on n'exclut jamais un
+// technicien des listes (les interventions passées le référencent toujours),
+// on se contente d'afficher son statut à côté de son nom.
+function technicienLabel(t){
+  const statut = t.statut || "actif";
+  return t.nom + (t.metier ? " — "+(METIERS[t.metier]||t.metier) : "") + (statut!=="actif" ? " ("+(TECHNICIEN_STATUTS[statut]||statut)+")" : "");
+}
+
 /* ---------------------------------------------------------------- utils */
 function esc(s){
   if(s===null||s===undefined) return "";
@@ -599,6 +614,7 @@ const PILL_LABELS = {
   brouillon:"Brouillon", envoye:"Envoyé", envoyee:"Envoyée", accepte:"Accepté", refuse:"Refusé",
   ouvert:"Ouvert", cloture:"Clôturé", soldee:"Soldée", recue_partielle:"Reçue partielle",
   actif:"Actif", immobilise:"Immobilisé", sorti_de_flotte:"Sorti de flotte",
+  suspendu:"Suspendu", licencie:"Licencié",
 };
 function pill(status){ return '<span class="pill '+esc(status)+'">'+esc(PILL_LABELS[status]||status)+"</span>"; }
 
@@ -944,7 +960,7 @@ function renderLinesEditor(container, items, articles, opts){
       const i = Number(slot.getAttribute("data-i"));
       mountSearchableSelect(slot, {
         items: [{id:"", nom:"— non assigné —", metier:""}, ...techniciens],
-        getId: t=>t.id, getLabel: t=>t.nom + (t.metier ? " — "+(METIERS[t.metier]||t.metier) : ""),
+        getId: t=>t.id, getLabel: t=> t.id ? technicienLabel(t) : t.nom,
         value: items[i].technicienId||"", placeholder: "Assigner à un technicien…",
         onChange: (id)=>{
           const tech = techniciens.find(t=>t.id===id);
@@ -1642,7 +1658,7 @@ VIEWS.devis = async function(view){
   document.getElementById("newDevis").addEventListener("click", ()=>openDevisForm(vehicules));
 };
 
-function openDevisForm(vehicules){
+function openDevisForm(vehicules, preselectVehiculeId){
   const items = [];
   const body =
     '<div class="field-row" style="grid-template-columns:2fr 1fr;">'+
@@ -1657,7 +1673,8 @@ function openDevisForm(vehicules){
       const [articles, techniciens] = await Promise.all([getAll("articles"), getAll("techniciens")]);
       const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens });
       const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
-        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
+        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""),
+        value: preselectVehiculeId||"", placeholder:"Rechercher une immatriculation…"
       });
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
@@ -2127,7 +2144,7 @@ function openAddInterventionToOr(o, techniciens){
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Ajouter</button>',
     onMount(back, close){
       const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
-        items: techniciens, getId:t=>t.id, getLabel:t=>t.nom+" — "+(METIERS[t.metier]||t.metier), placeholder:"Rechercher un technicien…"
+        items: techniciens, getId:t=>t.id, getLabel:technicienLabel, placeholder:"Rechercher un technicien…"
       });
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
@@ -2225,7 +2242,8 @@ VIEWS.triage = async function(view){
   const STATUT_CLASS = { pret:"accepte", bloque:"refuse", attente_capacite:"partielle", sans_devis:"brouillon" };
 
   view.innerHTML =
-    '<div class="view-head"><div><p class="lede">File d\'attente des véhicules immobilisés, triée par ancienneté, avec vérification automatique du stock et de la capacité de l\'atelier — se met à jour dès qu\'un véhicule change de statut.</p></div></div>'+
+    '<div class="view-head"><div><p class="lede">File d\'attente des véhicules immobilisés, triée par ancienneté, avec vérification automatique du stock et de la capacité de l\'atelier — se met à jour dès qu\'un véhicule change de statut.</p></div>'+
+      '<button class="btn primary" id="newDevisShortcut">+ Nouveau devis</button></div>'+
     '<div class="kpi-grid">'+
       '<div class="kpi good-top"><div class="lbl">Peuvent être pris en charge</div><div class="val">'+nbPret+'</div></div>'+
       '<div class="kpi danger-top"><div class="lbl">Bloqués (stock)</div><div class="val '+(nbBloque>0?"danger":"")+'">'+nbBloque+'</div></div>'+
@@ -2239,6 +2257,7 @@ VIEWS.triage = async function(view){
         const actions =
           (r.statut==="pret" ? '<button class="btn small primary" data-dev-open="'+r.devis.id+'">Envoyer à l\'atelier</button>' : "")+
           (r.statut!=="pret" && r.devis ? '<button class="btn small ghost" data-dev-open="'+r.devis.id+'">Voir le devis</button>' : "")+
+          (r.statut==="sans_devis" ? '<button class="btn small primary" data-devis-veh="'+r.vehicule.id+'">Créer un devis</button>' : "")+
           ((r.statut==="bloque" || r.statut==="sans_devis") ? '<button class="btn small danger" data-cmd-idx="'+i+'">Commande urgente</button>' : "");
         return (
         '<tr>'+
@@ -2253,9 +2272,11 @@ VIEWS.triage = async function(view){
       }).join("")+
     "</tbody></table></div>";
 
+  view.querySelector("#newDevisShortcut").addEventListener("click", ()=>openDevisForm(vehicules));
   view.querySelectorAll("[data-veh]").forEach(td=>td.addEventListener("click", ()=>setView("vehicule-detail",{id:td.getAttribute("data-veh")})));
   view.querySelectorAll("[data-dev]").forEach(td=>td.addEventListener("click", ()=>openDevisDetail(td.getAttribute("data-dev"))));
   view.querySelectorAll("[data-dev-open]").forEach(b=>b.addEventListener("click", ()=>openDevisDetail(b.getAttribute("data-dev-open"))));
+  view.querySelectorAll("[data-devis-veh]").forEach(b=>b.addEventListener("click", ()=>openDevisForm(vehicules, b.getAttribute("data-devis-veh"))));
   view.querySelectorAll("[data-cmd-idx]").forEach(b=>b.addEventListener("click", async ()=>{
     const r = rows[Number(b.getAttribute("data-cmd-idx"))];
     const veh = r.vehicule;
@@ -2277,13 +2298,16 @@ VIEWS.techniciens = async function(view){
     '<div id="tabBody"></div>';
   function drawListe(){
     document.getElementById("tabBody").innerHTML =
-      '<div class="view-head"><div><p class="lede">Techniciens de l\'atelier, par métier.</p></div><button class="btn primary" id="newTech">+ Technicien</button></div>'+
+      '<div class="view-head"><div><p class="lede">Techniciens de l\'atelier, par métier. Une sanction ou un licenciement se marque ici sans supprimer la fiche : l\'historique des interventions passées reste intact.</p></div><button class="btn primary" id="newTech">+ Technicien</button></div>'+
       '<div class="toolbar"><input type="search" id="techSearch" placeholder="Rechercher un technicien…"></div>'+
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Métier</th><th>Téléphone</th></tr></thead><tbody id="techTbody"></tbody></table></div>';
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Métier</th><th>Téléphone</th><th>Statut</th><th></th></tr></thead><tbody id="techTbody"></tbody></table></div>';
     function draw(){
       const t = document.getElementById("techSearch").value.toLowerCase();
       const rows = techniciens.filter(x=>!t || (x.nom||"").toLowerCase().includes(t) || (METIERS[x.metier]||"").toLowerCase().includes(t));
-      document.getElementById("techTbody").innerHTML = rows.length ? rows.map(x=>'<tr><td>'+esc(x.nom)+'</td><td>'+esc(METIERS[x.metier]||x.metier)+'</td><td>'+esc(x.telephone||"—")+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="3">Aucun technicien ne correspond.</td></tr>';
+      document.getElementById("techTbody").innerHTML = rows.length ? rows.map(x=>
+        '<tr><td>'+esc(x.nom)+'</td><td>'+esc(METIERS[x.metier]||x.metier)+'</td><td>'+esc(x.telephone||"—")+'</td><td>'+pill(x.statut||"actif")+'</td><td class="row-actions"><button class="btn small" data-edit="'+x.id+'">Modifier</button></td></tr>'
+      ).join("") : '<tr class="empty-row"><td colspan="5">Aucun technicien ne correspond.</td></tr>';
+      document.querySelectorAll("#techTbody [data-edit]").forEach(b=>b.addEventListener("click", ()=>openTechnicienForm(techniciens.find(x=>x.id===b.getAttribute("data-edit")))));
     }
     draw();
     document.getElementById("techSearch").addEventListener("input", draw);
@@ -2358,22 +2382,55 @@ VIEWS.techniciens = async function(view){
   });
 };
 
-function openTechnicienForm(){
+function openTechnicienForm(existing){
+  const t = existing || {};
+  const statutActuel = t.statut || "actif";
   const body =
-    '<div class="field"><label>Nom</label><input id="f_nom"></div>'+
-    '<div class="field"><label>Métier</label><select id="f_metier">'+
-      Object.entries(METIERS).map(([k,v])=>'<option value="'+k+'">'+v+"</option>").join("")+
-    "</select></div>"+
-    '<div class="field"><label>Téléphone</label><input id="f_tel"></div>';
-  const { close } = openModal("Nouveau technicien", body, {
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Nom</label><input id="f_nom" value="'+esc(t.nom||"")+'"></div>'+
+      '<div class="field"><label>Métier</label><select id="f_metier">'+
+        Object.entries(METIERS).map(([k,v])=>'<option value="'+k+'" '+(t.metier===k?"selected":"")+'>'+v+"</option>").join("")+
+      "</select></div>"+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Téléphone</label><input id="f_tel" value="'+esc(t.telephone||"")+'"></div>'+
+      '<div class="field"><label>Statut</label><select id="f_statut">'+
+        Object.entries(TECHNICIEN_STATUTS).map(([k,v])=>'<option value="'+k+'" '+(statutActuel===k?"selected":"")+'>'+v+"</option>").join("")+
+      "</select></div>"+
+    "</div>"+
+    '<div class="field-row" id="f_sanction_row" style="grid-template-columns:2fr 1fr;'+(statutActuel==="actif"?"display:none;":"")+'">'+
+      '<div class="field"><label>Motif (sanction / licenciement)</label><input id="f_motif" value="'+esc(t.motifSanction||"")+'" placeholder="ex. absences répétées, faute professionnelle…"></div>'+
+      '<div class="field"><label>Date</label><input id="f_date_sanction" type="date" value="'+esc((t.dateSanction||"").slice(0,10))+'"></div>'+
+    "</div>"+
+    (existing ? '<p class="faint" style="margin-top:0;">Suspendre ou licencier ne supprime rien : les interventions déjà réalisées par ce technicien restent dans son historique et dans la synthèse mensuelle.</p>' : "");
+  const { close } = openModal(existing ? "Modifier le technicien" : "Nouveau technicien", body, {
+    wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
     onMount(back, close){
+      const statutSel = back.querySelector("#f_statut");
+      const sanctionRow = back.querySelector("#f_sanction_row");
+      statutSel.addEventListener("change", ()=>{
+        sanctionRow.style.display = statutSel.value==="actif" ? "none" : "";
+      });
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
         const nom = back.querySelector("#f_nom").value.trim();
         if(!nom){ toast("Le nom est obligatoire.", "danger"); return; }
-        await state.db.collection("techniciens").add({ nom, metier: back.querySelector("#f_metier").value, telephone: back.querySelector("#f_tel").value.trim() });
-        close(); toast("Technicien ajouté."); renderView();
+        const statut = statutSel.value;
+        const data = {
+          nom, metier: back.querySelector("#f_metier").value, telephone: back.querySelector("#f_tel").value.trim(),
+          statut,
+          motifSanction: statut!=="actif" ? back.querySelector("#f_motif").value.trim() : null,
+          dateSanction: statut!=="actif" ? (back.querySelector("#f_date_sanction").value || todayIso()) : null,
+        };
+        if(existing){
+          await state.db.doc("techniciens/"+existing.id).update(data);
+          await logAudit(statut==="actif" ? "Réactivation technicien" : (statut==="licencie" ? "Licenciement technicien" : "Suspension technicien"), nom, data.motifSanction||"");
+        } else {
+          await state.db.collection("techniciens").add(data);
+          await logAudit("Création technicien", nom, "");
+        }
+        close(); toast("Technicien enregistré."); renderView();
       });
     }
   });
@@ -2474,7 +2531,11 @@ VIEWS.parametres = async function(view){
     '</div>'+
     '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Comptes ('+utilisateurs.length+')</h3><button class="btn primary" id="newUser">+ Utilisateur</button></div>'+
     '<div class="toolbar"><input type="search" id="userSearch" placeholder="Rechercher un compte…"></div>'+
-    '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Onglets</th><th>Statut</th><th></th></tr></thead><tbody id="userTbody"></tbody></table></div>';
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Onglets</th><th>Statut</th><th></th></tr></thead><tbody id="userTbody"></tbody></table></div>'+
+    '<div class="card danger" style="margin-top:8px;"><h3 style="color:var(--danger);">Zone dangereuse</h3>'+
+      '<p class="faint" style="margin-top:-8px;">Vide toutes les données d\'exploitation (véhicules, stock, fournisseurs, achats, devis, factures, ordres de réparation, mouvements de stock, comptages et journal d\'activité) et repart les numéros de documents à 1. Les comptes utilisateurs, les fiches techniciens et les paramètres généraux ne sont pas touchés. Action irréversible.</p>'+
+      '<button class="btn danger" id="resetAll">Réinitialiser l\'application</button>'+
+    '</div>';
 
   function draw(filter){
     const f = (filter||"").toLowerCase();
@@ -2503,7 +2564,46 @@ VIEWS.parametres = async function(view){
     state.config.devise = devise; state.config.entreprise = entreprise; state.config.capaciteAtelier = capaciteAtelier;
     toast("Paramètres enregistrés."); renderView();
   });
+  document.getElementById("resetAll").addEventListener("click", ()=> openResetConfirm());
 };
+
+/* ---- Réinitialisation complète (admin) ---------------------------------
+   Vide les tables d'exploitation via la fonction Postgres reset_all_data()
+   (security definer, réservée aux admins) plutôt que des suppressions
+   ligne par ligne côté client : plus rapide (une seule requête même avec
+   des centaines de véhicules) et atomique. La confirmation demande de
+   retaper un mot précis pour éviter un clic accidentel sur une action
+   irréversible. */
+function openResetConfirm(){
+  const body =
+    '<div class="callout danger"><span class="lbl">Action irréversible</span><p>Toutes les données suivantes seront supprimées définitivement : véhicules, stock/catalogue, fournisseurs, commandes, devis, ordres de réparation, factures, mouvements de stock, comptages et journal d\'activité. Les numéros de documents repartiront de 1.</p></div>'+
+    '<p class="muted">Ne sont <b>pas</b> supprimés : les comptes utilisateurs, les fiches techniciens et les paramètres généraux (nom de l\'entreprise, devise, capacité atelier).</p>'+
+    '<div class="field"><label>Tapez <span class="mono">REINITIALISER</span> pour confirmer</label><input id="f_confirm" autocomplete="off" placeholder="REINITIALISER"></div>';
+  const { close } = openModal("Réinitialiser l'application", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn danger" id="doReset" disabled>Réinitialiser définitivement</button>',
+    onMount(back, close){
+      const input = back.querySelector("#f_confirm");
+      const btn = back.querySelector("#doReset");
+      input.addEventListener("input", ()=>{ btn.disabled = input.value.trim().toUpperCase()!=="REINITIALISER"; });
+      back.querySelector("#cancel").addEventListener("click", close);
+      btn.addEventListener("click", async ()=>{
+        btn.disabled = true; btn.textContent = "Réinitialisation en cours…";
+        try{
+          const { error } = await sb.rpc("reset_all_data", {});
+          if(error) throw error;
+        }catch(e){
+          toast("Erreur : "+describeError(e), "danger");
+          btn.disabled = false; btn.textContent = "Réinitialiser définitivement";
+          return;
+        }
+        await logAudit("Réinitialisation complète des données", "", "");
+        close();
+        toast("Application réinitialisée.");
+        setView("dashboard");
+      });
+    }
+  });
+}
 
 function openUtilisateurForm(existing){
   const u = existing || { role:"agent", tabs: DEFAULT_AGENT_TABS, active:true };
