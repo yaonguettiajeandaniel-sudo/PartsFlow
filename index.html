@@ -64,7 +64,7 @@
      100vh-tall loginScreen pushes the real app content one screen-height
      below the fold, which reads as a blank page. */
   [hidden]{display:none !important;}
-  html,body{height:100%;}
+  html,body{height:100%; overflow-x:hidden;}
 
   /* ---- print (devis / factures) ---- */
   #printArea{display:none;}
@@ -215,7 +215,7 @@
   .modal.wide{max-width:860px;}
   .modal-head{display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--line);}
   .modal-head h3{font-size:1.05rem;}
-  .modal-body{padding:20px; max-height:70vh; overflow-y:auto;}
+  .modal-body{padding:20px; max-height:70vh; overflow-y:auto; overflow-x:auto;}
   .modal-foot{display:flex; justify-content:flex-end; gap:10px; padding:14px 20px; border-top:1px solid var(--line);}
   .modal-close{background:none; border:none; font-size:1.3rem; line-height:1; color:var(--ink-faint); padding:2px 6px;}
   .modal-close:hover{color:var(--ink);}
@@ -311,7 +311,7 @@
 
   /* ---- mobile ---- */
   #linesBox{overflow-x:auto; -webkit-overflow-scrolling:touch;}
-  .lines-table{min-width:560px;}
+  #linesBox .lines-table{min-width:560px;}
   @media (max-width:860px){
     .sidebar{
       position:sticky; top:0; z-index:20; height:auto;
