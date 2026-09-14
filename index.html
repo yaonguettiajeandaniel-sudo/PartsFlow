@@ -56,6 +56,14 @@
     --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.4);
   }
   *{box-sizing:border-box;}
+  /* Without this, the `hidden` attribute toggled from JS does nothing on
+     #loginScreen/#app: their own display:flex/grid rules below (author
+     CSS) always beat the browser's default [hidden]{display:none} rule,
+     since author styles outrank user-agent styles regardless of
+     specificity. Result: both stay visually present at once — the empty
+     100vh-tall loginScreen pushes the real app content one screen-height
+     below the fold, which reads as a blank page. */
+  [hidden]{display:none !important;}
   html,body{height:100%;}
   body{
     margin:0; background:var(--ground); color:var(--ink);
@@ -346,9 +354,7 @@ function makeDbShim(client){
     return {
       id,
       async get(){
-        console.log("[diag] doc.get()", table, id);
         const { data, error } = await client.from(table).select("*").eq("id", id).maybeSingle();
-        console.log("[diag] doc.get() result", table, id, { data, error });
         if(error) throw error;
         return { exists: !!data, id, data: ()=> data ? rowToCamel(data) : undefined };
       },
@@ -2280,29 +2286,21 @@ function renderTopbarUser(){
   box.querySelector("#logoutBtn").addEventListener("click", ()=> logout());
 }
 async function enterApp(authUser){
-  console.log("[diag] enterApp start", authUser.id);
   const profile = await getOne("utilisateurs", authUser.id);
-  console.log("[diag] profile fetched", profile);
   if(!profile || profile.active===false){
-    console.log("[diag] no active profile, logging out");
     await logout("Ce compte n'a pas (ou plus) accès à PartsFlow. Contactez un administrateur.");
     return;
   }
   state.actingUser = profile;
   watchProfile(authUser.id);
-  console.log("[diag] calling showApp");
   showApp();
   renderTopbarUser();
-  console.log("[diag] topbar rendered");
   const hash = location.hash.replace("#","");
   const [name, id] = hash.split("/");
   const initial = (NAV.find(n=>n.key===name) && hasTab(name)) ? name : (NAV.find(n=>hasTab(n.key))||{key:"dashboard"}).key;
   state.view = { name: initial, params: id ? {id} : {} };
-  console.log("[diag] calling renderNav, initial view =", initial);
   renderNav();
-  console.log("[diag] calling renderView");
   await renderView();
-  console.log("[diag] renderView done");
 }
 function renderLoginScreen(message){
   const screen = document.getElementById("loginScreen");
@@ -2345,16 +2343,13 @@ function renderLoginScreen(message){
 
 /* -------------------------------------------------------------- bootstrap */
 async function init(){
-  console.log("[diag] init start");
   state.db = makeDbShim(sb);
   try{
     const cfg = await getOne("config","general");
     if(cfg && cfg.devise) state.config.devise = cfg.devise;
-  }catch(e){ console.log("[diag] config fetch failed (non-blocking)", e); }
+  }catch(e){ /* devise falls back to default, non-blocking */ }
 
-  console.log("[diag] checking session");
   const { data: { session } } = await sb.auth.getSession();
-  console.log("[diag] session =", session);
   if(session && session.user){
     try{
       await enterApp(session.user);
