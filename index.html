@@ -792,17 +792,18 @@ const CSV_SPECS = {
   },
   vehicules: {
     title: "véhicules de la flotte",
-    template: "immatriculation;marque;modele;annee;chauffeurNom;chauffeurTelephone;km;statut\nCI-9001-QR;Toyota;Corolla;2021;Nom Prénom;0100000000;40000;actif\n",
+    template: "immatriculation;marque;modele;groupe;type;contrat;chauffeurNom;chauffeurTelephone;statut\nCI-9001-QR;Toyota;Corolla;A;Berline;Classique;Nom Prénom;0100000000;actif\n",
     filename: "modele-vehicules.csv",
     keyField: "immatriculation",
     map: (r)=>({
       immatriculation: pickField(r, ["immatriculation","immat","plaque"]).toUpperCase(),
       marque: pickField(r, ["marque"]),
       modele: pickField(r, ["modele","modèle"]),
-      annee: Number(pickField(r, ["annee","année","an"]))||null,
+      groupe: pickField(r, ["groupe","group"]),
+      type: pickField(r, ["type"]),
+      contrat: pickField(r, ["contrat"]),
       chauffeurNom: pickField(r, ["chauffeurnom","chauffeur","conducteur"]),
       chauffeurTelephone: pickField(r, ["chauffeurtelephone","telephone","tel","contact"]),
-      km: Number(pickField(r, ["km","kilometrage","kilométrage"]))||null,
       statut: (["actif","immobilise","sorti_de_flotte"].includes(pickField(r,["statut","etat","état"]).toLowerCase()) ? pickField(r,["statut","etat","état"]).toLowerCase() : "actif"),
       createdAt: todayIso(),
     }),
@@ -1126,25 +1127,27 @@ VIEWS.vehicules = async function(view){
   view.innerHTML =
     '<div class="view-head"><div><p class="lede">Flotte VTC suivie par PartsFlow — '+vehicules.length+' véhicule(s) enregistré(s).</p></div>'+
       '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newVehicule">+ Nouveau véhicule</button></div></div>'+
-    '<div class="toolbar"><input type="search" id="vehSearch" placeholder="Rechercher par immatriculation, chauffeur, marque…"></div>'+
+    '<div class="toolbar"><input type="search" id="vehSearch" placeholder="Rechercher par immatriculation, chauffeur, marque, groupe…"></div>'+
     '<div class="table-wrap"><table class="grid"><thead><tr>'+
-      '<th>Immatriculation</th><th>Véhicule</th><th>Chauffeur</th><th>Statut</th><th class="num">Km</th>'+
+      '<th>Immatriculation</th><th>Véhicule</th><th>Chauffeur</th><th>Groupe</th><th>Type</th><th>Contrat</th><th>Statut</th>'+
     "</tr></thead><tbody id=\"vehTbody\"></tbody></table></div>";
 
   function draw(filter){
     const f = (filter||"").toLowerCase();
     const rows = vehicules.filter(v=>
-      !f || [v.immatriculation,v.chauffeurNom,v.marque,v.modele].some(x=>(x||"").toLowerCase().includes(f))
+      !f || [v.immatriculation,v.chauffeurNom,v.marque,v.modele,v.groupe,v.type,v.contrat].some(x=>(x||"").toLowerCase().includes(f))
     );
     document.getElementById("vehTbody").innerHTML = rows.length ? rows.map(v=>
       '<tr class="clickable" data-id="'+v.id+'">'+
         '<td class="mono">'+esc(v.immatriculation)+'</td>'+
-        '<td>'+esc(v.marque)+" "+esc(v.modele)+(v.annee?' <span class="faint">('+v.annee+")</span>":"")+'</td>'+
+        '<td>'+esc(v.marque)+" "+esc(v.modele)+'</td>'+
         '<td>'+esc(v.chauffeurNom||"—")+"</td>"+
+        '<td>'+esc(v.groupe||"—")+"</td>"+
+        '<td>'+esc(v.type||"—")+"</td>"+
+        '<td>'+esc(v.contrat||"—")+"</td>"+
         '<td>'+pill(v.statut||"actif")+"</td>"+
-        '<td class="num mono">'+(v.km!=null? new Intl.NumberFormat("fr-FR").format(v.km) : "—")+"</td>"+
       "</tr>"
-    ).join("") : '<tr class="empty-row"><td colspan="5">Aucun véhicule ne correspond.</td></tr>';
+    ).join("") : '<tr class="empty-row"><td colspan="7">Aucun véhicule ne correspond.</td></tr>';
     document.querySelectorAll("#vehTbody [data-id]").forEach(tr=>{
       tr.addEventListener("click", ()=> setView("vehicule-detail", { id: tr.getAttribute("data-id") }));
     });
@@ -1168,9 +1171,10 @@ function openVehiculeForm(existing){
       '<div class="field"><label>Marque</label><input id="f_marque" value="'+esc(v.marque||"")+'"></div>'+
       '<div class="field"><label>Modèle</label><input id="f_modele" value="'+esc(v.modele||"")+'"></div>'+
     "</div>"+
-    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
-      '<div class="field"><label>Année</label><input id="f_annee" type="number" value="'+esc(v.annee||"")+'"></div>'+
-      '<div class="field"><label>Kilométrage</label><input id="f_km" type="number" value="'+esc(v.km||"")+'"></div>'+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr 1fr;">'+
+      '<div class="field"><label>Groupe</label><input id="f_groupe" value="'+esc(v.groupe||"")+'" placeholder="ex. A"></div>'+
+      '<div class="field"><label>Type</label><input id="f_type" value="'+esc(v.type||"")+'" placeholder="ex. Berline, Cargo"></div>'+
+      '<div class="field"><label>Contrat</label><input id="f_contrat" value="'+esc(v.contrat||"")+'" placeholder="ex. Classique, Vente"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
       '<div class="field"><label>Chauffeur</label><input id="f_chauffeur" value="'+esc(v.chauffeurNom||"")+'"></div>'+
@@ -1189,8 +1193,9 @@ function openVehiculeForm(existing){
           statut: nouveauStatut,
           marque: back.querySelector("#f_marque").value.trim(),
           modele: back.querySelector("#f_modele").value.trim(),
-          annee: Number(back.querySelector("#f_annee").value)||null,
-          km: Number(back.querySelector("#f_km").value)||null,
+          groupe: back.querySelector("#f_groupe").value.trim(),
+          type: back.querySelector("#f_type").value.trim(),
+          contrat: back.querySelector("#f_contrat").value.trim(),
           chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
           chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
         };
@@ -1228,10 +1233,11 @@ VIEWS["vehicule-detail"] = async function(view, params){
   view.innerHTML =
     '<button class="back-link" id="back">&larr; Retour aux véhicules</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(v.immatriculation)+'</h2>'+
-      '<p class="lede">'+esc(v.marque)+" "+esc(v.modele)+(v.annee?" · "+v.annee:"")+" · Chauffeur : "+esc(v.chauffeurNom||"non renseigné")+"</p></div>"+
+      '<p class="lede">'+esc(v.marque)+" "+esc(v.modele)+(v.type?" · "+esc(v.type):"")+" · Chauffeur : "+esc(v.chauffeurNom||"non renseigné")+"</p></div>"+
       '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button></div></div>'+
     '<div class="kpi-grid">'+
       '<div class="kpi"><div class="lbl">Statut</div><div class="val" style="font-size:1.1rem;">'+pill(v.statut||"actif")+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Groupe / Contrat</div><div class="val" style="font-size:1.1rem;">'+esc(v.groupe||"—")+' / '+esc(v.contrat||"—")+'</div></div>'+
       '<div class="kpi"><div class="lbl">Dépenses totales</div><div class="val">'+fmtMoney(totalDepenses)+'</div><div class="sub">pièces + main d\'œuvre</div></div>'+
       '<div class="kpi"><div class="lbl">Réglé à ce jour</div><div class="val">'+fmtMoney(totalRegle)+'</div></div>'+
       '<div class="kpi"><div class="lbl">Montant dû</div><div class="val '+(totalDu>0?"danger":"")+'">'+fmtMoney(totalDu)+'</div></div>'+
