@@ -304,6 +304,19 @@ const SUPABASE_KEY = "sb_publishable__5B_yoVFguUyl4PzRuF9Qw_staH7s72";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const AUTH_EMAIL_DOMAIN = "@cambouis.local";
 
+/* Diagnostic safety net (temporary): guarantees something visible shows
+   up even if an error escapes every try/catch below, instead of a
+   silent blank page. Remove once the app is confirmed stable. */
+function showFatalError(label, err){
+  console.error("[diag]", label, err);
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed; inset:0; background:#fff; z-index:99999; padding:24px; font-family:monospace; font-size:13px; color:#a6341e; overflow:auto; white-space:pre-wrap;";
+  box.textContent = "ERREUR (" + label + ") :\n\n" + (err && err.stack ? err.stack : String(err));
+  document.body.appendChild(box);
+}
+window.addEventListener("error", (e)=> showFatalError("window.error", e.error||e.message));
+window.addEventListener("unhandledrejection", (e)=> showFatalError("unhandledrejection", e.reason));
+
 /* --------------------------------------------------- Firestore-shaped
    data shim over Supabase/Postgres. Kept identical in shape to the
    capability the app was first built against (db.collection(x).add(),
@@ -333,7 +346,9 @@ function makeDbShim(client){
     return {
       id,
       async get(){
+        console.log("[diag] doc.get()", table, id);
         const { data, error } = await client.from(table).select("*").eq("id", id).maybeSingle();
+        console.log("[diag] doc.get() result", table, id, { data, error });
         if(error) throw error;
         return { exists: !!data, id, data: ()=> data ? rowToCamel(data) : undefined };
       },
@@ -2265,21 +2280,29 @@ function renderTopbarUser(){
   box.querySelector("#logoutBtn").addEventListener("click", ()=> logout());
 }
 async function enterApp(authUser){
+  console.log("[diag] enterApp start", authUser.id);
   const profile = await getOne("utilisateurs", authUser.id);
+  console.log("[diag] profile fetched", profile);
   if(!profile || profile.active===false){
+    console.log("[diag] no active profile, logging out");
     await logout("Ce compte n'a pas (ou plus) accès à PartsFlow. Contactez un administrateur.");
     return;
   }
   state.actingUser = profile;
   watchProfile(authUser.id);
+  console.log("[diag] calling showApp");
   showApp();
   renderTopbarUser();
+  console.log("[diag] topbar rendered");
   const hash = location.hash.replace("#","");
   const [name, id] = hash.split("/");
   const initial = (NAV.find(n=>n.key===name) && hasTab(name)) ? name : (NAV.find(n=>hasTab(n.key))||{key:"dashboard"}).key;
   state.view = { name: initial, params: id ? {id} : {} };
+  console.log("[diag] calling renderNav, initial view =", initial);
   renderNav();
-  renderView();
+  console.log("[diag] calling renderView");
+  await renderView();
+  console.log("[diag] renderView done");
 }
 function renderLoginScreen(message){
   const screen = document.getElementById("loginScreen");
@@ -2322,25 +2345,28 @@ function renderLoginScreen(message){
 
 /* -------------------------------------------------------------- bootstrap */
 async function init(){
+  console.log("[diag] init start");
   state.db = makeDbShim(sb);
   try{
     const cfg = await getOne("config","general");
     if(cfg && cfg.devise) state.config.devise = cfg.devise;
-  }catch(e){}
+  }catch(e){ console.log("[diag] config fetch failed (non-blocking)", e); }
 
+  console.log("[diag] checking session");
   const { data: { session } } = await sb.auth.getSession();
+  console.log("[diag] session =", session);
   if(session && session.user){
     try{
       await enterApp(session.user);
     }catch(e){
-      console.error(e);
+      showFatalError("init/enterApp", e);
       showLogin("Erreur au chargement : " + (e.message||e));
     }
   } else {
     showLogin();
   }
 }
-init();
+init().catch(e=> showFatalError("init", e));
 })();
 </script>
 </body>
