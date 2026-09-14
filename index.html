@@ -2758,6 +2758,14 @@ const MANUEL_SECTIONS = [
   { id:"parametres", title:"Paramètres", html:`
     <p>Réservé aux administrateurs.</p>
     <p><b>Comptes :</b> la création se fait en deux étapes — d'abord dans Supabase (Authentication → Users → Add user, avec un email au format <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. La révocation, elle, se fait entièrement ici en décochant "Compte actif".</p>
+    <p><b>Changer un mot de passe :</b> PartsFlow n'a pas de bouton "mot de passe oublié" et n'en a pas besoin — les identifiants de connexion sont des adresses fictives (<span class="mono">identifiant@cambouis.local</span>), donc un email de réinitialisation ne peut de toute façon arriver nulle part. Le changement se fait entièrement côté administrateur, dans Supabase :</p>
+    <ol>
+      <li>Aller sur <span class="mono">Authentication → Users</span> dans le tableau de bord Supabase.</li>
+      <li>Cliquer sur le compte concerné (repérable par son email <span class="mono">identifiant@cambouis.local</span>).</li>
+      <li>Choisir "Reset password" (ou l'option équivalente pour définir un nouveau mot de passe) et saisir le nouveau mot de passe.</li>
+      <li>Communiquer ce nouveau mot de passe à la personne concernée par un canal sûr (pas par écrit dans un endroit partagé).</li>
+    </ol>
+    <p>Cette procédure sert aussi bien à réinitialiser un mot de passe oublié qu'à en changer un par précaution. Rien à faire côté PartsFlow lui-même — la personne se reconnecte simplement avec le nouveau mot de passe à son prochain accès.</p>
     <p><b>Général :</b> nom de l'entreprise (affiché en en-tête des documents imprimés), devise, et capacité de l'atelier (nombre d'ordres de réparation ouverts en parallèle) utilisée par l'onglet Prise en charge.</p>
     <p><b>Zone dangereuse :</b> le bouton "Réinitialiser l'application" vide véhicules, stock, fournisseurs, achats, devis, factures, ordres de réparation, mouvements de stock, comptages et journal, et remet les numéros de documents à 1. Les comptes utilisateurs, les fiches techniciens et les paramètres généraux ne sont pas touchés. Cette action est irréversible : il faut taper le mot <span class="mono">REINITIALISER</span> dans la fenêtre de confirmation pour l'activer, afin d'éviter tout clic accidentel.</p>
   `},
