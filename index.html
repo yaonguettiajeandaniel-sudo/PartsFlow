@@ -338,11 +338,21 @@ const AUTH_EMAIL_DOMAIN = "@cambouis.local";
 /* Diagnostic safety net (temporary): guarantees something visible shows
    up even if an error escapes every try/catch below, instead of a
    silent blank page. Remove once the app is confirmed stable. */
+function describeError(err){
+  if(!err) return String(err);
+  if(err.stack) return err.stack;
+  if(typeof err === "object"){
+    const parts = ["message","details","hint","code"].filter(k=>err[k]).map(k=>k+": "+err[k]);
+    if(parts.length) return parts.join("\n");
+    try{ return JSON.stringify(err, null, 2); }catch(e){ return String(err); }
+  }
+  return String(err);
+}
 function showFatalError(label, err){
   console.error("[diag]", label, err);
   const box = document.createElement("div");
   box.style.cssText = "position:fixed; inset:0; background:#fff; z-index:99999; padding:24px; font-family:monospace; font-size:13px; color:#a6341e; overflow:auto; white-space:pre-wrap;";
-  box.textContent = "ERREUR (" + label + ") :\n\n" + (err && err.stack ? err.stack : String(err));
+  box.textContent = "ERREUR (" + label + ") :\n\n" + describeError(err);
   document.body.appendChild(box);
 }
 window.addEventListener("error", (e)=> showFatalError("window.error", e.error||e.message));
@@ -388,6 +398,10 @@ function makeDbShim(client){
       async set(patch){
         const row = Object.assign({ id }, objToSnake(patch));
         const { error } = await client.from(table).upsert(row);
+        if(error) throw error;
+      },
+      async delete(){
+        const { error } = await client.from(table).delete().eq("id", id);
         if(error) throw error;
       },
       onSnapshot(next, errCb){
@@ -1626,10 +1640,18 @@ async function openDevisDetail(id){
   }
   openModal("Devis "+d.numero, body, {
     wide:true,
-    footHtml: '<button class="btn ghost" id="cl">Fermer</button><button class="btn" id="printDev">Imprimer / PDF</button>'+statusButtons.join(""),
+    footHtml: '<button class="btn ghost" id="cl">Fermer</button><button class="btn" id="printDev">Imprimer / PDF</button>'+statusButtons.join("")+(isAdmin() ? '<button class="btn danger" id="deleteDev">Supprimer</button>' : ""),
     onMount(back, close){
       back.querySelector("#cl").addEventListener("click", close);
       back.querySelector("#printDev").addEventListener("click", ()=> printDocument("devis", d, veh));
+      const delB = back.querySelector("#deleteDev");
+      if(delB) delB.addEventListener("click", async ()=>{
+        const ok = await askConfirm("Supprimer définitivement le devis "+d.numero+" ? Cette action est irréversible — à réserver aux données de test.", "Supprimer définitivement");
+        if(!ok) return;
+        await state.db.doc("devis/"+d.id).delete();
+        await logAudit("Suppression devis", d.numero, "");
+        close(); toast("Devis supprimé."); renderView();
+      });
       const setStatut = (s)=> async ()=>{ await state.db.doc("devis/"+d.id).update({statut:s}); close(); renderView(); };
       const teB = back.querySelector("#toEnvoye"); if(teB) teB.addEventListener("click", setStatut("envoye"));
       const taB = back.querySelector("#toAccepte"); if(taB) taB.addEventListener("click", setStatut("accepte"));
@@ -1798,6 +1820,7 @@ VIEWS["facture-detail"] = async function(view, params){
         (f.statutPaiement!=="annulee" && reste>0 ? '<button class="btn primary" id="addReg" style="margin-top:14px; width:100%;">Ajouter un règlement</button>' : "")+
         "</div>"+
         (f.statutPaiement!=="annulee" ? '<button class="btn danger" id="cancelFac" style="width:100%;">Annuler la facture</button>' : '<div class="callout danger"><span class="lbl">Annulée</span><p>Cette facture a été annulée et ne compte plus dans les montants dus.</p></div>')+
+        (isAdmin() ? '<button class="btn ghost" id="deleteFac" style="width:100%; margin-top:8px; color:var(--danger);">Supprimer définitivement</button>' : "")+
       "</div>"+
     "</div>";
 
@@ -1820,6 +1843,14 @@ VIEWS["facture-detail"] = async function(view, params){
     await state.db.doc("factures/"+f.id).update({ statutPaiement:"annulee" });
     await logAudit("Annulation facture", f.numero, "Reste dû annulé : "+fmtMoney(reste));
     toast("Facture annulée."); setView("facture-detail",{id:f.id});
+  });
+  const deleteBtn = view.querySelector("#deleteFac");
+  if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
+    const ok = await askConfirm("Supprimer définitivement la facture "+f.numero+" ? Cette action est irréversible et ne touche pas au stock — à réserver aux données de test.", "Supprimer définitivement");
+    if(!ok) return;
+    await state.db.doc("factures/"+f.id).delete();
+    await logAudit("Suppression facture", f.numero, "");
+    toast("Facture supprimée."); setView("factures");
   });
 };
 
