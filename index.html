@@ -543,6 +543,13 @@ const METIERS = {
   froid_auto: "Technicien froid auto",
 };
 
+const MOTIFS_INACTIVITE = {
+  mecanique: "Mécanique",
+  tolerie: "Tôlerie",
+  peinture: "Peinture",
+  administratif: "Documents administratifs",
+};
+
 /* ---------------------------------------------------------------- utils */
 function esc(s){
   if(s===null||s===undefined) return "";
@@ -1043,8 +1050,8 @@ function startOfWeek(d){
 function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
 
 VIEWS.dashboard = async function(view){
-  const [vehicules, articles, factures, ordres, devis] = await Promise.all([
-    getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("devis")
+  const [vehicules, articles, factures, ordres] = await Promise.all([
+    getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres")
   ]);
   const facturesActives = factures.filter(f=>f.statutPaiement!=="annulee");
   const totalDu = facturesActives.reduce((s,f)=> s + Math.max(0,(f.montantTotal||0)-(f.montantRegle||0)), 0);
@@ -1054,7 +1061,9 @@ VIEWS.dashboard = async function(view){
 
   const immobilises = vehicules.filter(v=>v.statut==="immobilise");
   const vehiculesEnReparation = new Set(orOuverts.map(o=>o.vehiculeId));
-  const enAttentePriseEnCharge = devis.filter(d=>d.statut==="accepte" && !d.orId && !d.factureId);
+  // Basé sur le statut réel du véhicule (pas seulement sur l'état du devis) pour que
+  // ce chiffre se mette à jour dès qu'un véhicule change de statut, cf. l'onglet Triage.
+  const enAttentePriseEnCharge = immobilises.filter(v=>!vehiculesEnReparation.has(v.id));
   const now = new Date();
   const debutSemaine = startOfWeek(now), debutMois = startOfMonth(now);
   const orClotures = ordres.filter(o=>o.statut==="cloture" && o.dateCloture);
@@ -1085,7 +1094,7 @@ VIEWS.dashboard = async function(view){
     '<div class="kpi-grid">'+
       '<div class="kpi clickable danger-top" data-goto="vehicules"><div class="lbl">Immobilisés</div><div class="val '+(immobilises.length>0?"danger":"")+'">'+immobilises.length+'</div><div class="sub">véhicules à l\'arrêt</div></div>'+
       '<div class="kpi clickable good-top" data-goto="atelier" data-filter="ouvert"><div class="lbl">En réparation</div><div class="val">'+vehiculesEnReparation.size+'</div><div class="sub">véhicules, OR ouvert</div></div>'+
-      '<div class="kpi clickable amber-top" data-goto="triage"><div class="lbl">En attente de prise en charge</div><div class="val '+(enAttentePriseEnCharge.length>0?"amber":"")+'">'+enAttentePriseEnCharge.length+'</div><div class="sub">devis acceptés, pas encore à l\'atelier</div></div>'+
+      '<div class="kpi clickable amber-top" data-goto="triage"><div class="lbl">En attente de prise en charge</div><div class="val '+(enAttentePriseEnCharge.length>0?"amber":"")+'">'+enAttentePriseEnCharge.length+'</div><div class="sub">immobilisés, pas encore en réparation</div></div>'+
       '<div class="kpi clickable teal-top" data-goto="atelier"><div class="lbl">Réparés cette semaine</div><div class="val">'+reparesSemaine+'</div><div class="sub">depuis lundi</div></div>'+
       '<div class="kpi clickable teal-top" data-goto="atelier"><div class="lbl">Réparés ce mois-ci</div><div class="val">'+reparesMois+'</div><div class="sub">'+now.toLocaleDateString("fr-FR",{month:"long"})+'</div></div>'+
     '</div>'+
@@ -1145,7 +1154,7 @@ VIEWS.vehicules = async function(view){
         '<td>'+esc(v.groupe||"—")+"</td>"+
         '<td>'+esc(v.type||"—")+"</td>"+
         '<td>'+esc(v.contrat||"—")+"</td>"+
-        '<td>'+pill(v.statut||"actif")+"</td>"+
+        '<td>'+pill(v.statut||"actif")+(v.statut==="immobilise" && v.motifInactivite ? '<br><span class="faint" style="font-size:.78rem;">'+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite)+"</span>" : "")+"</td>"+
       "</tr>"
     ).join("") : '<tr class="empty-row"><td colspan="7">Aucun véhicule ne correspond.</td></tr>';
     document.querySelectorAll("#vehTbody [data-id]").forEach(tr=>{
@@ -1167,6 +1176,13 @@ function openVehiculeForm(existing){
         ["actif","immobilise","sorti_de_flotte"].map(s=>'<option value="'+s+'" '+(v.statut===s?"selected":"")+'>'+PILL_LABELS[s]+"</option>").join("")+
       "</select></div>"+
     "</div>"+
+    '<div class="field-row" id="f_inactivite_row" style="grid-template-columns:1fr 1fr;'+(v.statut==="immobilise"?"":"display:none;")+'">'+
+      '<div class="field"><label>Motif d\'immobilisation</label><select id="f_motif">'+
+        '<option value="">— à préciser —</option>'+
+        Object.entries(MOTIFS_INACTIVITE).map(([k,l])=>'<option value="'+k+'" '+((v.motifInactivite||"")===k?"selected":"")+'>'+l+"</option>").join("")+
+      "</select></div>"+
+      '<div class="field"><label>Éléments précis concernés</label><input id="f_detail" value="'+esc(v.detailInactivite||"")+'" placeholder="ex. plaquettes avant, pare-choc arrière…"></div>'+
+    "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
       '<div class="field"><label>Marque</label><input id="f_marque" value="'+esc(v.marque||"")+'"></div>'+
       '<div class="field"><label>Modèle</label><input id="f_modele" value="'+esc(v.modele||"")+'"></div>'+
@@ -1183,11 +1199,19 @@ function openVehiculeForm(existing){
   const { close } = openModal(existing ? "Modifier le véhicule" : "Nouveau véhicule", body, {
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
     onMount(back, close){
+      const statutSel = back.querySelector("#f_statut");
+      const inactRow = back.querySelector("#f_inactivite_row");
+      statutSel.addEventListener("change", ()=>{
+        inactRow.style.display = statutSel.value==="immobilise" ? "" : "none";
+      });
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
         const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
         if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
-        const nouveauStatut = back.querySelector("#f_statut").value;
+        const nouveauStatut = statutSel.value;
+        if(nouveauStatut==="immobilise" && !back.querySelector("#f_motif").value){
+          toast("Choisissez un motif d'immobilisation.", "danger"); return;
+        }
         const data = {
           immatriculation: immat,
           statut: nouveauStatut,
@@ -1199,6 +1223,13 @@ function openVehiculeForm(existing){
           chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
           chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
         };
+        if(nouveauStatut==="immobilise"){
+          data.motifInactivite = back.querySelector("#f_motif").value;
+          data.detailInactivite = back.querySelector("#f_detail").value.trim();
+        } else {
+          data.motifInactivite = null;
+          data.detailInactivite = null;
+        }
         // Track "depuis quand immobilisé" for the file d'attente de prise en charge —
         // stamped the moment the status changes to immobilisé, cleared otherwise.
         if(nouveauStatut==="immobilise" && (!existing || existing.statut!=="immobilise")) data.immobiliseDepuis = todayIso();
@@ -1234,7 +1265,7 @@ VIEWS["vehicule-detail"] = async function(view, params){
     '<button class="back-link" id="back">&larr; Retour aux véhicules</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(v.immatriculation)+'</h2>'+
       '<p class="lede">'+esc(v.marque)+" "+esc(v.modele)+(v.type?" · "+esc(v.type):"")+" · Chauffeur : "+esc(v.chauffeurNom||"non renseigné")+"</p></div>"+
-      '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button></div></div>'+
+      '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button>'+(v.statut==="immobilise" ? '<button class="btn danger" id="cmdUrgente">Commande urgente</button>' : "")+'</div></div>'+
     '<div class="kpi-grid">'+
       '<div class="kpi"><div class="lbl">Statut</div><div class="val" style="font-size:1.1rem;">'+pill(v.statut||"actif")+'</div></div>'+
       '<div class="kpi"><div class="lbl">Groupe / Contrat</div><div class="val" style="font-size:1.1rem;">'+esc(v.groupe||"—")+' / '+esc(v.contrat||"—")+'</div></div>'+
@@ -1242,6 +1273,9 @@ VIEWS["vehicule-detail"] = async function(view, params){
       '<div class="kpi"><div class="lbl">Réglé à ce jour</div><div class="val">'+fmtMoney(totalRegle)+'</div></div>'+
       '<div class="kpi"><div class="lbl">Montant dû</div><div class="val '+(totalDu>0?"danger":"")+'">'+fmtMoney(totalDu)+'</div></div>'+
     "</div>"+
+    (v.statut==="immobilise" ?
+      '<div class="callout danger"><span class="lbl">Immobilisation — '+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite||"motif non précisé")+'</span><p>'+esc(v.detailInactivite||"Aucun détail renseigné.")+'</p></div>'
+    : "")+
     '<h3 class="section-title">Factures</h3>'+
     '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Date</th><th class="num">Total</th><th class="num">Réglé</th><th class="num">Reste dû</th><th>Statut</th></tr></thead><tbody>'+
       (mesFactures.length ? mesFactures.map(f=>{
@@ -1258,6 +1292,15 @@ VIEWS["vehicule-detail"] = async function(view, params){
 
   view.querySelector("#back").addEventListener("click", ()=>setView("vehicules"));
   view.querySelector("#editVeh").addEventListener("click", ()=>openVehiculeForm(v));
+  const cmdBtn = view.querySelector("#cmdUrgente");
+  if(cmdBtn) cmdBtn.addEventListener("click", async ()=>{
+    const [fournisseurs, articles] = await Promise.all([getAll("fournisseurs"), getAll("articles")]);
+    openCommandeForm(fournisseurs, articles, {
+      urgente: true,
+      vehiculeId: v.id,
+      note: "Immobilisation "+v.immatriculation+" — "+(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite||"motif non précisé")+(v.detailInactivite ? " : "+v.detailInactivite : "")
+    });
+  });
   view.querySelectorAll("[data-f]").forEach(tr=>tr.addEventListener("click", ()=>setView("facture-detail",{id:tr.getAttribute("data-f")})));
   view.querySelectorAll("[data-or]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-or")})));
 };
@@ -1411,7 +1454,11 @@ async function openMouvementsHistory(article){
 /* ---- Achats (fournisseurs + commandes) ------------------------------ */
 VIEWS.achats = async function(view){
   const [fournisseurs, commandes, articles] = await Promise.all([getAll("fournisseurs"), getAll("commandes"), getAll("articles")]);
-  commandes.sort((a,b)=>new Date(b.dateCommande)-new Date(a.dateCommande));
+  commandes.sort((a,b)=>{
+    const ua = a.urgente && a.statut!=="soldee", ub = b.urgente && b.statut!=="soldee";
+    if(ua!==ub) return ua ? -1 : 1;
+    return new Date(b.dateCommande)-new Date(a.dateCommande);
+  });
 
   view.innerHTML =
     '<div class="view-head"><div><p class="lede">Fournisseurs et commandes d\'approvisionnement.</p></div>'+
@@ -1431,7 +1478,7 @@ VIEWS.achats = async function(view){
     });
     document.getElementById("cmdTbody").innerHTML = rows.length ? rows.map(c=>{
       const f = fournisseurs.find(x=>x.id===c.fournisseurId);
-      return '<tr class="clickable" data-cmd="'+c.id+'"><td class="mono">'+esc(c.numero)+'</td><td>'+esc(f?f.nom:"—")+'</td><td>'+fmtDate(c.dateCommande)+'</td><td>'+pill(c.statut)+'</td><td class="num">'+(c.lignes||[]).length+"</td></tr>";
+      return '<tr class="clickable" data-cmd="'+c.id+'"><td class="mono">'+esc(c.numero)+(c.urgente ? ' <span class="pill impayee" style="margin-left:4px;">Urgente</span>' : "")+'</td><td>'+esc(f?f.nom:"—")+'</td><td>'+fmtDate(c.dateCommande)+'</td><td>'+pill(c.statut)+'</td><td class="num">'+(c.lignes||[]).length+"</td></tr>";
     }).join("") : '<tr class="empty-row"><td colspan="5">Aucune commande ne correspond.</td></tr>';
     document.querySelectorAll("[data-cmd]").forEach(tr=>tr.addEventListener("click", ()=>openCommandeDetail(tr.getAttribute("data-cmd"))));
   }
@@ -1471,11 +1518,15 @@ function openFournisseurForm(){
   });
 }
 
-function openCommandeForm(fournisseurs, articles){
-  const items = [];
+function openCommandeForm(fournisseurs, articles, opts){
+  opts = opts || {};
+  const items = (opts.prefillLignes || []).map(l=>({ ...l }));
   const body =
+    (opts.urgente ? '<div class="callout danger"><span class="lbl">Commande urgente</span><p>Pièces nécessaires pour remettre un véhicule immobilisé en service dès que possible.</p></div>' : "")+
     '<div class="field"><label>Fournisseur</label><div id="fournSlot"></div></div>'+
     '<div class="field"><label>Date de livraison prévue</label><input id="f_datelivraison" type="date"></div>'+
+    '<div class="field"><label>Note</label><input id="f_note" value="'+esc(opts.note||"")+'" placeholder="ex. véhicule concerné, motif…"></div>'+
+    '<label class="checkbox-row"><input type="checkbox" id="f_urgente" '+(opts.urgente?"checked":"")+'> Commande urgente</label>'+
     '<div class="field"><label>Lignes commandées</label><div id="linesBox"></div></div>';
   const { close } = openModal("Nouvelle commande fournisseur", body, {
     wide:true,
@@ -1498,9 +1549,12 @@ function openCommandeForm(fournisseurs, articles){
         await state.db.collection("commandes").add({
           numero, fournisseurId, statut:"envoyee",
           dateCommande: todayIso(), dateReceptionPrevue: back.querySelector("#f_datelivraison").value || null,
+          urgente: back.querySelector("#f_urgente").checked,
+          vehiculeId: opts.vehiculeId || null,
+          note: back.querySelector("#f_note").value.trim(),
           lignes, createdAt: todayIso(), createdBy: actingUserName()
         });
-        await logAudit("Création commande", numero, "");
+        await logAudit("Création commande", numero, (back.querySelector("#f_urgente").checked ? "Urgente" : ""));
         close(); toast("Commande créée."); renderView();
       });
     }
@@ -1516,7 +1570,8 @@ async function openCommandeDetail(id){
     '<td class="num mono">'+fmtMoney(l.prixUnitaire)+"</td></tr>"
   ).join("");
   const body =
-    '<p class="muted" style="margin-top:0;">Fournisseur : <b>'+esc(f?f.nom:"—")+'</b> · Statut : '+pill(c.statut)+"</p>"+
+    '<p class="muted" style="margin-top:0;">Fournisseur : <b>'+esc(f?f.nom:"—")+'</b> · Statut : '+pill(c.statut)+(c.urgente ? ' · <span class="pill impayee">Urgente</span>' : "")+"</p>"+
+    (c.note ? '<p class="faint" style="margin-top:-6px;">'+esc(c.note)+"</p>" : "")+
     '<table class="lines-table"><thead><tr><th>Référence</th><th>Commandé</th><th>Reçu</th><th>P.U.</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
     (c.statut!=="soldee" ? '<div class="callout"><span class="lbl">Réception</span><p>Indiquez la quantité effectivement reçue par ligne, puis validez : le stock et le coût moyen sont mis à jour automatiquement.</p></div>' : "");
   const footHtml = c.statut!=="soldee"
@@ -2093,21 +2148,25 @@ function openAddInterventionToOr(o, techniciens){
 }
 
 /* ---- Prise en charge (triage) -------------------------------------------
-   Aide à la décision, pas une décision automatique : pour chaque véhicule
-   dont le devis est accepté mais pas encore envoyé à l'atelier, on
-   vérifie si les pièces nécessaires sont réellement disponibles — en
-   tenant compte de ce que les véhicules plus anciens dans la file ont
-   déjà "réservé" avant lui — et si l'atelier a une place libre (nombre
-   d'OR ouverts vs capacité configurée). Le résultat est une
+   Aide à la décision, pas une décision automatique : la file est construite
+   à partir du statut réel de chaque véhicule (immobilisé, pas déjà en
+   réparation) — elle se met donc à jour automatiquement dès qu'un véhicule
+   change de statut. Pour chaque véhicule de la file, si un devis accepté
+   est prêt à partir, on vérifie si les pièces nécessaires sont réellement
+   disponibles — en tenant compte de ce que les véhicules plus anciens dans
+   la file ont déjà "réservé" avant lui — et si l'atelier a une place libre
+   (nombre d'OR ouverts vs capacité configurée). Le résultat est une
    recommandation affichée, jamais un accès bloqué : le chef d'atelier
-   garde toujours la main via "Envoyer à l'atelier" sur le devis. */
+   garde toujours la main via "Envoyer à l'atelier" sur le devis, ou peut
+   déclencher une commande urgente pour les pièces qui manquent. */
 VIEWS.triage = async function(view){
   const [devis, vehicules, articles, ordres] = await Promise.all([
     getAll("devis"), getAll("vehicules"), getAll("articles"), getAll("ordres")
   ]);
-  const queue = devis
-    .filter(d=>d.statut==="accepte" && !d.orId && !d.factureId)
-    .sort((a,b)=> new Date(a.date) - new Date(b.date));
+  const vehiculesEnReparation = new Set(ordres.filter(o=>o.statut==="ouvert").map(o=>o.vehiculeId));
+  const queue = vehicules
+    .filter(v=>v.statut==="immobilise" && !vehiculesEnReparation.has(v.id))
+    .sort((a,b)=> new Date(a.immobiliseDepuis||0) - new Date(b.immobiliseDepuis||0));
 
   const stockSim = {};
   articles.forEach(a=>{ stockSim[a.id] = Number(a.stockQte)||0; });
@@ -2116,73 +2175,98 @@ VIEWS.triage = async function(view){
   const orOuvertsCount = ordres.filter(o=>o.statut==="ouvert").length;
   let placesRestantes = Math.max(0, capacite - orOuvertsCount);
 
-  const rows = queue.map(d=>{
-    const veh = vehicules.find(v=>v.id===d.vehiculeId);
-    const pieceLignes = (d.lignes||[]).filter(l=>l.type!=="main_oeuvre" && l.articleId);
-    const manquants = [];
-    pieceLignes.forEach(l=>{
-      const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
-      if((Number(l.quantite)||0) > dispo){
-        const art = articles.find(a=>a.id===l.articleId);
-        manquants.push({ reference: art?art.reference:(l.reference||"?"), besoin:Number(l.quantite)||0, dispo });
-      }
-    });
-    const okStock = manquants.length===0;
-    pieceLignes.forEach(l=>{
-      const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
-      stockSim[l.articleId] = Math.max(0, dispo - (Number(l.quantite)||0));
-    });
+  const rows = queue.map(veh=>{
+    const d = devis
+      .filter(x=>x.vehiculeId===veh.id && x.statut==="accepte" && !x.orId && !x.factureId)
+      .sort((a,b)=> new Date(a.date)-new Date(b.date))[0];
 
-    const referenceDate = (veh && veh.immobiliseDepuis) ? veh.immobiliseDepuis : d.date;
-    const joursAttente = Math.max(0, Math.floor((Date.now() - new Date(referenceDate).getTime()) / 86400000));
+    const referenceDate = veh.immobiliseDepuis || (d ? d.date : null);
+    const joursAttente = referenceDate ? Math.max(0, Math.floor((Date.now() - new Date(referenceDate).getTime()) / 86400000)) : 0;
 
-    let statut, raison;
-    if(!okStock){
-      statut = "bloque";
-      raison = "Pièce(s) manquante(s) : " + manquants.map(m=>m.reference+" (besoin "+m.besoin+", dispo "+m.dispo+")").join(" · ");
-    } else if(placesRestantes <= 0){
-      statut = "attente_capacite";
-      raison = "Atelier à pleine capacité ("+orOuvertsCount+"/"+capacite+" OR ouverts)";
+    let statut, raison, manquants = [];
+    if(!d){
+      statut = "sans_devis";
+      raison = "Aucun devis accepté en attente" + (veh.motifInactivite ? " — "+(MOTIFS_INACTIVITE[veh.motifInactivite]||veh.motifInactivite)+(veh.detailInactivite ? " : "+veh.detailInactivite : "") : "");
     } else {
-      statut = "pret";
-      raison = "Pièces disponibles, atelier a de la place";
-      placesRestantes--;
+      const pieceLignes = (d.lignes||[]).filter(l=>l.type!=="main_oeuvre" && l.articleId);
+      pieceLignes.forEach(l=>{
+        const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
+        if((Number(l.quantite)||0) > dispo){
+          const art = articles.find(a=>a.id===l.articleId);
+          manquants.push({ articleId:l.articleId, reference: art?art.reference:(l.reference||"?"), designation: art?art.designation:(l.designation||""), besoin:Number(l.quantite)||0, dispo, prixUnitaire: art?(art.prixAchat||0):0 });
+        }
+      });
+      const okStock = manquants.length===0;
+      pieceLignes.forEach(l=>{
+        const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
+        stockSim[l.articleId] = Math.max(0, dispo - (Number(l.quantite)||0));
+      });
+      if(!okStock){
+        statut = "bloque";
+        raison = "Pièce(s) manquante(s) : " + manquants.map(m=>m.reference+" (besoin "+m.besoin+", dispo "+m.dispo+")").join(" · ");
+      } else if(placesRestantes <= 0){
+        statut = "attente_capacite";
+        raison = "Atelier à pleine capacité ("+orOuvertsCount+"/"+capacite+" OR ouverts)";
+      } else {
+        statut = "pret";
+        raison = "Pièces disponibles, atelier a de la place";
+        placesRestantes--;
+      }
+      if(d.dureeEstimeeJours) raison += " · Durée estimée : "+d.dureeEstimeeJours+" j";
     }
-    if(d.dureeEstimeeJours) raison += " · Durée estimée : "+d.dureeEstimeeJours+" j";
-    return { devis:d, vehicule:veh, joursAttente, statut, raison };
+    return { devis:d, vehicule:veh, joursAttente, statut, raison, manquants };
   });
 
   const nbPret = rows.filter(r=>r.statut==="pret").length;
   const nbBloque = rows.filter(r=>r.statut==="bloque").length;
   const nbAttenteCap = rows.filter(r=>r.statut==="attente_capacite").length;
-  const STATUT_LABEL = { pret:"Peut être pris en charge", bloque:"Bloqué", attente_capacite:"Atelier complet" };
-  const STATUT_CLASS = { pret:"accepte", bloque:"refuse", attente_capacite:"partielle" };
+  const nbSansDevis = rows.filter(r=>r.statut==="sans_devis").length;
+  const STATUT_LABEL = { pret:"Peut être pris en charge", bloque:"Bloqué", attente_capacite:"Atelier complet", sans_devis:"Devis à préparer" };
+  const STATUT_CLASS = { pret:"accepte", bloque:"refuse", attente_capacite:"partielle", sans_devis:"brouillon" };
 
   view.innerHTML =
-    '<div class="view-head"><div><p class="lede">File d\'attente des véhicules à prendre en charge, triée par ancienneté, avec vérification automatique du stock et de la capacité de l\'atelier.</p></div></div>'+
+    '<div class="view-head"><div><p class="lede">File d\'attente des véhicules immobilisés, triée par ancienneté, avec vérification automatique du stock et de la capacité de l\'atelier — se met à jour dès qu\'un véhicule change de statut.</p></div></div>'+
     '<div class="kpi-grid">'+
       '<div class="kpi good-top"><div class="lbl">Peuvent être pris en charge</div><div class="val">'+nbPret+'</div></div>'+
       '<div class="kpi danger-top"><div class="lbl">Bloqués (stock)</div><div class="val '+(nbBloque>0?"danger":"")+'">'+nbBloque+'</div></div>'+
       '<div class="kpi amber-top"><div class="lbl">En attente d\'une place</div><div class="val '+(nbAttenteCap>0?"amber":"")+'">'+nbAttenteCap+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Devis à préparer</div><div class="val '+(nbSansDevis>0?"amber":"")+'">'+nbSansDevis+'</div></div>'+
       '<div class="kpi"><div class="lbl">Capacité atelier</div><div class="val">'+orOuvertsCount+' / '+capacite+'</div><div class="sub">OR ouverts / capacité configurée</div></div>'+
     '</div>'+
-    (queue.length===0 ? '<div class="callout"><span class="lbl">File vide</span><p>Aucun devis accepté n\'attend d\'être envoyé à l\'atelier pour le moment.</p></div>' : '')+
+    (queue.length===0 ? '<div class="callout"><span class="lbl">File vide</span><p>Aucun véhicule immobilisé n\'attend de prise en charge pour le moment.</p></div>' : '')+
     '<div class="table-wrap"><table class="grid"><thead><tr><th>Véhicule</th><th>Devis</th><th class="num">Attente</th><th>Statut</th><th>Détail</th><th></th></tr></thead><tbody>'+
-      rows.map(r=>
+      rows.map((r,i)=>{
+        const actions =
+          (r.statut==="pret" ? '<button class="btn small primary" data-dev-open="'+r.devis.id+'">Envoyer à l\'atelier</button>' : "")+
+          (r.statut!=="pret" && r.devis ? '<button class="btn small ghost" data-dev-open="'+r.devis.id+'">Voir le devis</button>' : "")+
+          ((r.statut==="bloque" || r.statut==="sans_devis") ? '<button class="btn small danger" data-cmd-idx="'+i+'">Commande urgente</button>' : "");
+        return (
         '<tr>'+
-          '<td class="mono clickable" data-veh="'+(r.vehicule?r.vehicule.id:"")+'">'+esc(r.vehicule?r.vehicule.immatriculation:"—")+'</td>'+
-          '<td class="mono clickable" data-dev="'+r.devis.id+'">'+esc(r.devis.numero)+'</td>'+
+          '<td class="mono clickable" data-veh="'+r.vehicule.id+'">'+esc(r.vehicule.immatriculation)+'</td>'+
+          (r.devis ? '<td class="mono clickable" data-dev="'+r.devis.id+'">'+esc(r.devis.numero)+'</td>' : '<td class="mono faint">—</td>')+
           '<td class="num mono">'+r.joursAttente+' j</td>'+
           '<td><span class="pill '+STATUT_CLASS[r.statut]+'">'+STATUT_LABEL[r.statut]+'</span></td>'+
           '<td class="faint" style="max-width:360px;">'+esc(r.raison)+'</td>'+
-          '<td class="row-actions">'+(r.statut==="pret" ? '<button class="btn small primary" data-dev-open="'+r.devis.id+'">Envoyer à l\'atelier</button>' : '<button class="btn small ghost" data-dev-open="'+r.devis.id+'">Voir le devis</button>')+'</td>'+
+          '<td class="row-actions">'+actions+'</td>'+
         '</tr>'
-      ).join("")+
+        );
+      }).join("")+
     "</tbody></table></div>";
 
-  view.querySelectorAll("[data-veh]").forEach(td=>{ if(td.getAttribute("data-veh")) td.addEventListener("click", ()=>setView("vehicule-detail",{id:td.getAttribute("data-veh")})); });
+  view.querySelectorAll("[data-veh]").forEach(td=>td.addEventListener("click", ()=>setView("vehicule-detail",{id:td.getAttribute("data-veh")})));
   view.querySelectorAll("[data-dev]").forEach(td=>td.addEventListener("click", ()=>openDevisDetail(td.getAttribute("data-dev"))));
   view.querySelectorAll("[data-dev-open]").forEach(b=>b.addEventListener("click", ()=>openDevisDetail(b.getAttribute("data-dev-open"))));
+  view.querySelectorAll("[data-cmd-idx]").forEach(b=>b.addEventListener("click", async ()=>{
+    const r = rows[Number(b.getAttribute("data-cmd-idx"))];
+    const veh = r.vehicule;
+    const [fournisseurs, arts] = await Promise.all([getAll("fournisseurs"), getAll("articles")]);
+    openCommandeForm(fournisseurs, arts, {
+      urgente: true,
+      vehiculeId: veh.id,
+      note: "Immobilisation "+veh.immatriculation+" — "+(MOTIFS_INACTIVITE[veh.motifInactivite]||veh.motifInactivite||"motif non précisé")+(veh.detailInactivite ? " : "+veh.detailInactivite : ""),
+      prefillLignes: r.manquants.map(m=>({ articleId:m.articleId, reference:m.reference, designation:m.designation, quantite: Math.max(1, m.besoin-m.dispo), prixUnitaire:m.prixUnitaire }))
+    });
+  }));
 };
 
 /* ---- Techniciens & synthèse mensuelle ---------------------------------- */
