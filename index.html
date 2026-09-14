@@ -65,6 +65,28 @@
      below the fold, which reads as a blank page. */
   [hidden]{display:none !important;}
   html,body{height:100%;}
+
+  /* ---- print (devis / factures) ---- */
+  #printArea{display:none;}
+  .doc-head{display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; padding-bottom:16px; border-bottom:2px solid #000;}
+  .doc-head .co{font-family:'Big Shoulders'; font-weight:800; font-size:1.5rem; text-transform:uppercase;}
+  .doc-head .doc-type{text-align:right;}
+  .doc-head .doc-type h1{font-size:1.4rem; margin-bottom:4px;}
+  .doc-meta{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:22px; font-size:0.92rem;}
+  .doc-meta .blk{border:1px solid #ccc; padding:10px 14px;}
+  .doc-meta .blk .k{font-size:0.68rem; text-transform:uppercase; letter-spacing:0.05em; color:#666; margin-bottom:4px;}
+  .doc-table{width:100%; border-collapse:collapse; margin-bottom:18px; font-size:0.9rem;}
+  .doc-table th{background:#eee; text-align:left; padding:8px 10px; border:1px solid #ccc; font-size:0.72rem; text-transform:uppercase;}
+  .doc-table td{padding:8px 10px; border:1px solid #ccc;}
+  .doc-totals{margin-left:auto; width:280px; font-size:0.95rem;}
+  .doc-totals div{display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #ddd;}
+  .doc-totals .grand{font-weight:800; font-size:1.1rem; border-bottom:none; border-top:2px solid #000; margin-top:4px; padding-top:10px;}
+  .doc-foot{margin-top:40px; font-size:0.78rem; color:#666; border-top:1px solid #ccc; padding-top:10px;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:20px; color:#000; background:#fff;}
+  }
   body{
     margin:0; background:var(--ground); color:var(--ink);
     font-family:'IBM Plex Sans', system-ui, sans-serif;
@@ -297,6 +319,7 @@
 </div>
 <div id="modalRoot"></div>
 <div class="toast-wrap" id="toastWrap"></div>
+<div id="printArea"></div>
 
 <script>
 (function(){
@@ -419,13 +442,59 @@ function downloadFile(filename, content){
   setTimeout(()=> URL.revokeObjectURL(url), 1000);
 }
 
+/* ------------------------------------------------------------- printing
+   Builds a clean, letterhead-style document into the hidden #printArea
+   and opens the browser's print dialog — "Enregistrer en PDF" there is
+   the de facto free PDF export, no library needed. */
+function printDocument(kind, doc, vehicule){
+  const isFacture = kind === "facture";
+  const title = isFacture ? "Facture" : "Devis";
+  const lignesHtml = (doc.lignes||[]).map(l=>{
+    const montant = l.montant!=null ? l.montant : computeLigneMontant(l);
+    return '<tr><td>'+(l.type==="main_oeuvre" ? "Main d'œuvre — " : "")+esc(l.designation||l.reference||"")+'</td>'+
+      '<td style="text-align:right;">'+(l.quantite!=null?l.quantite:1)+'</td>'+
+      '<td style="text-align:right;">'+fmtMoney(l.prixUnitaire)+'</td>'+
+      '<td style="text-align:right;">'+fmtMoney(montant)+'</td></tr>';
+  }).join("");
+  const total = (doc.lignes||[]).reduce((s,l)=> s + (l.montant!=null?l.montant:computeLigneMontant(l)), 0);
+  const totalsHtml = isFacture
+    ? '<div class="doc-totals">'+
+        '<div><span>Total</span><b>'+fmtMoney(doc.montantTotal!=null?doc.montantTotal:total)+'</b></div>'+
+        '<div><span>Réglé</span><b>'+fmtMoney(doc.montantRegle)+'</b></div>'+
+        '<div class="grand"><span>Reste dû</span><b>'+fmtMoney(Math.max(0,(doc.montantTotal||0)-(doc.montantRegle||0)))+'</b></div>'+
+      '</div>'
+    : '<div class="doc-totals"><div class="grand"><span>Total</span><b>'+fmtMoney(total)+'</b></div></div>';
+  const reglementsHtml = isFacture && (doc.reglements||[]).length
+    ? '<h3 style="font-size:0.9rem; text-transform:uppercase; margin:22px 0 8px;">Règlements reçus</h3>'+
+      '<table class="doc-table"><thead><tr><th>Date</th><th>Mode</th><th style="text-align:right;">Montant</th></tr></thead><tbody>'+
+        doc.reglements.map(r=>'<tr><td>'+fmtDate(r.date)+'</td><td>'+esc(r.mode)+'</td><td style="text-align:right;">'+fmtMoney(r.montant)+'</td></tr>').join("")+
+      '</tbody></table>'
+    : "";
+  const html =
+    '<div class="doc-head">'+
+      '<div class="co">'+esc(state.config.entreprise || "Votre entreprise")+'</div>'+
+      '<div class="doc-type"><h1>'+title.toUpperCase()+' '+esc(doc.numero)+'</h1><div>'+fmtDate(doc.date)+'</div></div>'+
+    '</div>'+
+    '<div class="doc-meta">'+
+      '<div class="blk"><div class="k">Véhicule</div><div>'+esc(vehicule?vehicule.immatriculation:"—")+' — '+esc(vehicule?(vehicule.marque+" "+vehicule.modele):"")+'</div></div>'+
+      '<div class="blk"><div class="k">Chauffeur</div><div>'+esc(vehicule&&vehicule.chauffeurNom || "—")+'<br>'+esc(vehicule&&vehicule.chauffeurTelephone || "")+'</div></div>'+
+    '</div>'+
+    '<table class="doc-table"><thead><tr><th>Désignation</th><th style="text-align:right;">Qté</th><th style="text-align:right;">P.U.</th><th style="text-align:right;">Montant</th></tr></thead><tbody>'+
+      (lignesHtml || '<tr><td colspan="4">—</td></tr>')+
+    '</tbody></table>'+
+    totalsHtml + reglementsHtml +
+    '<div class="doc-foot">Document généré par PartsFlow le '+fmtDate(todayIso())+'.</div>';
+  document.getElementById("printArea").innerHTML = html;
+  setTimeout(()=> window.print(), 50);
+}
+
 /* ---------------------------------------------------------------- state */
 const state = {
   db: null,
   ready: false,
   actingUser: null,
   utilisateurs: [],
-  config: { devise: "FCFA" },
+  config: { devise: "FCFA", entreprise: "", capaciteAtelier: 5 },
   view: { name: "dashboard", params: {} },
 };
 
@@ -437,10 +506,11 @@ const NAV = [
   { key:"devis", label:"Devis", ico:"05" },
   { key:"factures", label:"Factures", ico:"06" },
   { key:"atelier", label:"Atelier / OR", ico:"07" },
-  { key:"techniciens", label:"Techniciens", ico:"08" },
-  { key:"comptage", label:"Comptage stock", ico:"09" },
-  { key:"journal", label:"Journal", ico:"10" },
-  { key:"parametres", label:"Paramètres", ico:"11" },
+  { key:"triage", label:"Prise en charge", ico:"08" },
+  { key:"techniciens", label:"Techniciens", ico:"09" },
+  { key:"comptage", label:"Comptage stock", ico:"10" },
+  { key:"journal", label:"Journal", ico:"11" },
+  { key:"parametres", label:"Paramètres", ico:"12" },
 ];
 
 const ROLES = {
@@ -947,15 +1017,34 @@ async function renderView(){
 const VIEWS = {};
 
 /* ---- Dashboard ---------------------------------------------------- */
+function startOfWeek(d){
+  const day = d.getDay();
+  const diff = (day===0 ? -6 : 1-day);
+  const monday = new Date(d);
+  monday.setHours(0,0,0,0);
+  monday.setDate(d.getDate()+diff);
+  return monday;
+}
+function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+
 VIEWS.dashboard = async function(view){
-  const [vehicules, articles, factures, ordres] = await Promise.all([
-    getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres")
+  const [vehicules, articles, factures, ordres, devis] = await Promise.all([
+    getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("devis")
   ]);
   const facturesActives = factures.filter(f=>f.statutPaiement!=="annulee");
   const totalDu = facturesActives.reduce((s,f)=> s + Math.max(0,(f.montantTotal||0)-(f.montantRegle||0)), 0);
   const stockValeur = articles.reduce((s,a)=> s + (Number(a.stockQte)||0)*(Number(a.prixAchat)||0), 0);
   const sousSeuil = articles.filter(a=> (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0));
   const orOuverts = ordres.filter(o=>o.statut==="ouvert");
+
+  const immobilises = vehicules.filter(v=>v.statut==="immobilise");
+  const vehiculesEnReparation = new Set(orOuverts.map(o=>o.vehiculeId));
+  const enAttentePriseEnCharge = devis.filter(d=>d.statut==="accepte" && !d.orId && !d.factureId);
+  const now = new Date();
+  const debutSemaine = startOfWeek(now), debutMois = startOfMonth(now);
+  const orClotures = ordres.filter(o=>o.statut==="cloture" && o.dateCloture);
+  const reparesSemaine = orClotures.filter(o=> new Date(o.dateCloture) >= debutSemaine).length;
+  const reparesMois = orClotures.filter(o=> new Date(o.dateCloture) >= debutMois).length;
 
   const parVehicule = {};
   facturesActives.forEach(f=>{
@@ -976,6 +1065,14 @@ VIEWS.dashboard = async function(view){
       '<div class="kpi clickable teal-top" data-goto="stock"><div class="lbl">Valeur du stock</div><div class="val">'+fmtMoney(stockValeur)+'</div><div class="sub">au coût d\'achat</div></div>'+
       '<div class="kpi clickable amber-top" data-goto="stock" data-filter="sousSeuil"><div class="lbl">Réf. sous seuil</div><div class="val '+(sousSeuil.length>0?"amber":"")+'">'+sousSeuil.length+'</div><div class="sub">à réapprovisionner</div></div>'+
       '<div class="kpi clickable good-top" data-goto="atelier" data-filter="ouvert"><div class="lbl">OR ouverts</div><div class="val">'+orOuverts.length+'</div><div class="sub">interventions en cours</div></div>'+
+    '</div>'+
+    '<h3 class="section-title">État de la flotte &amp; réparations</h3>'+
+    '<div class="kpi-grid">'+
+      '<div class="kpi clickable danger-top" data-goto="vehicules"><div class="lbl">Immobilisés</div><div class="val '+(immobilises.length>0?"danger":"")+'">'+immobilises.length+'</div><div class="sub">véhicules à l\'arrêt</div></div>'+
+      '<div class="kpi clickable good-top" data-goto="atelier" data-filter="ouvert"><div class="lbl">En réparation</div><div class="val">'+vehiculesEnReparation.size+'</div><div class="sub">véhicules, OR ouvert</div></div>'+
+      '<div class="kpi clickable amber-top" data-goto="triage"><div class="lbl">En attente de prise en charge</div><div class="val '+(enAttentePriseEnCharge.length>0?"amber":"")+'">'+enAttentePriseEnCharge.length+'</div><div class="sub">devis acceptés, pas encore à l\'atelier</div></div>'+
+      '<div class="kpi clickable teal-top" data-goto="atelier"><div class="lbl">Réparés cette semaine</div><div class="val">'+reparesSemaine+'</div><div class="sub">depuis lundi</div></div>'+
+      '<div class="kpi clickable teal-top" data-goto="atelier"><div class="lbl">Réparés ce mois-ci</div><div class="val">'+reparesMois+'</div><div class="sub">'+now.toLocaleDateString("fr-FR",{month:"long"})+'</div></div>'+
     '</div>'+
     '<div class="detail-grid">'+
       '<div>'+
@@ -1072,9 +1169,10 @@ function openVehiculeForm(existing){
       back.querySelector("#save").addEventListener("click", async ()=>{
         const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
         if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
+        const nouveauStatut = back.querySelector("#f_statut").value;
         const data = {
           immatriculation: immat,
-          statut: back.querySelector("#f_statut").value,
+          statut: nouveauStatut,
           marque: back.querySelector("#f_marque").value.trim(),
           modele: back.querySelector("#f_modele").value.trim(),
           annee: Number(back.querySelector("#f_annee").value)||null,
@@ -1082,6 +1180,10 @@ function openVehiculeForm(existing){
           chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
           chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
         };
+        // Track "depuis quand immobilisé" for the file d'attente de prise en charge —
+        // stamped the moment the status changes to immobilisé, cleared otherwise.
+        if(nouveauStatut==="immobilise" && (!existing || existing.statut!=="immobilise")) data.immobiliseDepuis = todayIso();
+        if(nouveauStatut!=="immobilise") data.immobiliseDepuis = null;
         if(existing){
           await state.db.doc("vehicules/"+existing.id).update(data);
           await logAudit("Modification véhicule", immat, "");
@@ -1468,7 +1570,10 @@ VIEWS.devis = async function(view){
 function openDevisForm(vehicules){
   const items = [];
   const body =
-    '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+    '<div class="field-row" style="grid-template-columns:2fr 1fr;">'+
+      '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+      '<div class="field"><label>Durée estimée (jours)</label><input id="f_duree" type="number" min="0" placeholder="ex. 2"></div>'+
+    '</div>'+
     '<div class="field"><label>Lignes</label><div id="linesBox"></div></div>';
   const { close } = openModal("Nouveau devis", body, {
     wide:true,
@@ -1485,9 +1590,10 @@ function openDevisForm(vehicules){
         if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
         const lignes = editor.getItems();
         if(!lignes.length){ toast("Ajoutez au moins une ligne.", "danger"); return; }
+        const dureeEstimeeJours = Number(back.querySelector("#f_duree").value)||null;
         const numero = await nextNumero("devis","DEV");
         await state.db.collection("devis").add({
-          numero, vehiculeId, statut:"brouillon", date: todayIso(), lignes,
+          numero, vehiculeId, statut:"brouillon", date: todayIso(), lignes, dureeEstimeeJours,
           createdAt: todayIso(), createdBy: actingUserName()
         });
         await logAudit("Création devis", numero, "");
@@ -1505,7 +1611,7 @@ async function openDevisDetail(id){
     '<tr><td>'+(l.type==="main_oeuvre"?'<span class="faint">Main d\'œuvre</span> — ':"")+esc(l.designation||l.reference)+'</td><td class="num mono">'+l.quantite+'</td><td class="num mono">'+fmtMoney(l.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(computeLigneMontant(l))+"</td></tr>"
   ).join("");
   const body =
-    '<p class="muted" style="margin-top:0;">Véhicule : <b class="mono">'+esc(veh?veh.immatriculation:"—")+'</b> · Statut : '+pill(d.statut)+" · Date : "+fmtDate(d.date)+"</p>"+
+    '<p class="muted" style="margin-top:0;">Véhicule : <b class="mono">'+esc(veh?veh.immatriculation:"—")+'</b> · Statut : '+pill(d.statut)+" · Date : "+fmtDate(d.date)+(d.dureeEstimeeJours?" · Durée estimée : "+d.dureeEstimeeJours+" j":"")+"</p>"+
     '<table class="lines-table"><thead><tr><th>Ligne</th><th>Qté</th><th>P.U.</th><th>Montant</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
     '<div class="lines-total"><span class="muted">Total devis</span><b>'+fmtMoney(total)+"</b></div>"+
     (d.factureId ? '<div class="callout"><span class="lbl">Converti</span><p>Ce devis a été converti directement en facture.</p></div>' : "")+
@@ -1520,9 +1626,10 @@ async function openDevisDetail(id){
   }
   openModal("Devis "+d.numero, body, {
     wide:true,
-    footHtml: '<button class="btn ghost" id="cl">Fermer</button>'+statusButtons.join(""),
+    footHtml: '<button class="btn ghost" id="cl">Fermer</button><button class="btn" id="printDev">Imprimer / PDF</button>'+statusButtons.join(""),
     onMount(back, close){
       back.querySelector("#cl").addEventListener("click", close);
+      back.querySelector("#printDev").addEventListener("click", ()=> printDocument("devis", d, veh));
       const setStatut = (s)=> async ()=>{ await state.db.doc("devis/"+d.id).update({statut:s}); close(); renderView(); };
       const teB = back.querySelector("#toEnvoye"); if(teB) teB.addEventListener("click", setStatut("envoye"));
       const taB = back.querySelector("#toAccepte"); if(taB) taB.addEventListener("click", setStatut("accepte"));
@@ -1672,7 +1779,7 @@ VIEWS["facture-detail"] = async function(view, params){
     '<button class="back-link" id="back">&larr; Retour aux factures</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.5rem;">Facture '+esc(f.numero)+'</h2>'+
       '<p class="lede">Véhicule <a href="#" id="vehLink" class="mono">'+esc(veh?veh.immatriculation:"—")+'</a> · '+fmtDate(f.date)+'</p></div>'+
-      '<div>'+pill(f.statutPaiement)+"</div></div>"+
+      '<div class="row-actions"><button class="btn" id="printFac">Imprimer / PDF</button>'+pill(f.statutPaiement)+"</div></div>"+
     '<div class="detail-grid">'+
       '<div>'+
         '<table class="lines-table"><thead><tr><th>Ligne</th><th>Qté</th><th>P.U.</th><th>Montant</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
@@ -1695,6 +1802,7 @@ VIEWS["facture-detail"] = async function(view, params){
     "</div>";
 
   view.querySelector("#back").addEventListener("click", ()=>setView("factures"));
+  view.querySelector("#printFac").addEventListener("click", ()=> printDocument("facture", f, veh));
   const vl = view.querySelector("#vehLink");
   if(vl && veh) vl.addEventListener("click", e=>{ e.preventDefault(); setView("vehicule-detail",{id:veh.id}); });
   const addRegBtn = view.querySelector("#addReg");
@@ -1947,6 +2055,99 @@ function openAddInterventionToOr(o, techniciens){
   });
 }
 
+/* ---- Prise en charge (triage) -------------------------------------------
+   Aide à la décision, pas une décision automatique : pour chaque véhicule
+   dont le devis est accepté mais pas encore envoyé à l'atelier, on
+   vérifie si les pièces nécessaires sont réellement disponibles — en
+   tenant compte de ce que les véhicules plus anciens dans la file ont
+   déjà "réservé" avant lui — et si l'atelier a une place libre (nombre
+   d'OR ouverts vs capacité configurée). Le résultat est une
+   recommandation affichée, jamais un accès bloqué : le chef d'atelier
+   garde toujours la main via "Envoyer à l'atelier" sur le devis. */
+VIEWS.triage = async function(view){
+  const [devis, vehicules, articles, ordres] = await Promise.all([
+    getAll("devis"), getAll("vehicules"), getAll("articles"), getAll("ordres")
+  ]);
+  const queue = devis
+    .filter(d=>d.statut==="accepte" && !d.orId && !d.factureId)
+    .sort((a,b)=> new Date(a.date) - new Date(b.date));
+
+  const stockSim = {};
+  articles.forEach(a=>{ stockSim[a.id] = Number(a.stockQte)||0; });
+
+  const capacite = Number(state.config.capaciteAtelier)||5;
+  const orOuvertsCount = ordres.filter(o=>o.statut==="ouvert").length;
+  let placesRestantes = Math.max(0, capacite - orOuvertsCount);
+
+  const rows = queue.map(d=>{
+    const veh = vehicules.find(v=>v.id===d.vehiculeId);
+    const pieceLignes = (d.lignes||[]).filter(l=>l.type!=="main_oeuvre" && l.articleId);
+    const manquants = [];
+    pieceLignes.forEach(l=>{
+      const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
+      if((Number(l.quantite)||0) > dispo){
+        const art = articles.find(a=>a.id===l.articleId);
+        manquants.push({ reference: art?art.reference:(l.reference||"?"), besoin:Number(l.quantite)||0, dispo });
+      }
+    });
+    const okStock = manquants.length===0;
+    pieceLignes.forEach(l=>{
+      const dispo = stockSim[l.articleId]!=null ? stockSim[l.articleId] : 0;
+      stockSim[l.articleId] = Math.max(0, dispo - (Number(l.quantite)||0));
+    });
+
+    const referenceDate = (veh && veh.immobiliseDepuis) ? veh.immobiliseDepuis : d.date;
+    const joursAttente = Math.max(0, Math.floor((Date.now() - new Date(referenceDate).getTime()) / 86400000));
+
+    let statut, raison;
+    if(!okStock){
+      statut = "bloque";
+      raison = "Pièce(s) manquante(s) : " + manquants.map(m=>m.reference+" (besoin "+m.besoin+", dispo "+m.dispo+")").join(" · ");
+    } else if(placesRestantes <= 0){
+      statut = "attente_capacite";
+      raison = "Atelier à pleine capacité ("+orOuvertsCount+"/"+capacite+" OR ouverts)";
+    } else {
+      statut = "pret";
+      raison = "Pièces disponibles, atelier a de la place";
+      placesRestantes--;
+    }
+    if(d.dureeEstimeeJours) raison += " · Durée estimée : "+d.dureeEstimeeJours+" j";
+    return { devis:d, vehicule:veh, joursAttente, statut, raison };
+  });
+
+  const nbPret = rows.filter(r=>r.statut==="pret").length;
+  const nbBloque = rows.filter(r=>r.statut==="bloque").length;
+  const nbAttenteCap = rows.filter(r=>r.statut==="attente_capacite").length;
+  const STATUT_LABEL = { pret:"Peut être pris en charge", bloque:"Bloqué", attente_capacite:"Atelier complet" };
+  const STATUT_CLASS = { pret:"accepte", bloque:"refuse", attente_capacite:"partielle" };
+
+  view.innerHTML =
+    '<div class="view-head"><div><p class="lede">File d\'attente des véhicules à prendre en charge, triée par ancienneté, avec vérification automatique du stock et de la capacité de l\'atelier.</p></div></div>'+
+    '<div class="kpi-grid">'+
+      '<div class="kpi good-top"><div class="lbl">Peuvent être pris en charge</div><div class="val">'+nbPret+'</div></div>'+
+      '<div class="kpi danger-top"><div class="lbl">Bloqués (stock)</div><div class="val '+(nbBloque>0?"danger":"")+'">'+nbBloque+'</div></div>'+
+      '<div class="kpi amber-top"><div class="lbl">En attente d\'une place</div><div class="val '+(nbAttenteCap>0?"amber":"")+'">'+nbAttenteCap+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Capacité atelier</div><div class="val">'+orOuvertsCount+' / '+capacite+'</div><div class="sub">OR ouverts / capacité configurée</div></div>'+
+    '</div>'+
+    (queue.length===0 ? '<div class="callout"><span class="lbl">File vide</span><p>Aucun devis accepté n\'attend d\'être envoyé à l\'atelier pour le moment.</p></div>' : '')+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Véhicule</th><th>Devis</th><th class="num">Attente</th><th>Statut</th><th>Détail</th><th></th></tr></thead><tbody>'+
+      rows.map(r=>
+        '<tr>'+
+          '<td class="mono clickable" data-veh="'+(r.vehicule?r.vehicule.id:"")+'">'+esc(r.vehicule?r.vehicule.immatriculation:"—")+'</td>'+
+          '<td class="mono clickable" data-dev="'+r.devis.id+'">'+esc(r.devis.numero)+'</td>'+
+          '<td class="num mono">'+r.joursAttente+' j</td>'+
+          '<td><span class="pill '+STATUT_CLASS[r.statut]+'">'+STATUT_LABEL[r.statut]+'</span></td>'+
+          '<td class="faint" style="max-width:360px;">'+esc(r.raison)+'</td>'+
+          '<td class="row-actions">'+(r.statut==="pret" ? '<button class="btn small primary" data-dev-open="'+r.devis.id+'">Envoyer à l\'atelier</button>' : '<button class="btn small ghost" data-dev-open="'+r.devis.id+'">Voir le devis</button>')+'</td>'+
+        '</tr>'
+      ).join("")+
+    "</tbody></table></div>";
+
+  view.querySelectorAll("[data-veh]").forEach(td=>{ if(td.getAttribute("data-veh")) td.addEventListener("click", ()=>setView("vehicule-detail",{id:td.getAttribute("data-veh")})); });
+  view.querySelectorAll("[data-dev]").forEach(td=>td.addEventListener("click", ()=>openDevisDetail(td.getAttribute("data-dev"))));
+  view.querySelectorAll("[data-dev-open]").forEach(b=>b.addEventListener("click", ()=>openDevisDetail(b.getAttribute("data-dev-open"))));
+};
+
 /* ---- Techniciens & synthèse mensuelle ---------------------------------- */
 VIEWS.techniciens = async function(view){
   const techniciens = await getAll("techniciens");
@@ -2142,7 +2343,14 @@ VIEWS.parametres = async function(view){
   view.innerHTML =
     '<div class="view-head"><div><p class="lede">Comptes d\'accès et paramètres généraux de PartsFlow.</p></div></div>'+
     '<div class="callout"><span class="lbl">Créer un compte</span><p>Se fait en deux étapes : d\'abord dans Supabase (Authentication → Users → Add user, avec un email <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. Révoquer un accès, en revanche, se fait entièrement ici — décoche « Compte actif » et la personne est déconnectée en quelques secondes, où qu\'elle soit.</p></div>'+
-    '<div class="card"><h3>Devise</h3><div class="field" style="max-width:200px;"><input id="f_devise" value="'+esc(state.config.devise)+'"></div><button class="btn" id="saveDevise">Enregistrer</button></div>'+
+    '<div class="card"><h3>Général</h3>'+
+      '<div class="field-row" style="grid-template-columns:2fr 1fr 1fr;">'+
+        '<div class="field"><label>Nom de l\'entreprise (en-tête des documents imprimés)</label><input id="f_entreprise" value="'+esc(state.config.entreprise||"")+'" placeholder="Ex. Garage Kouassi &amp; Fils"></div>'+
+        '<div class="field"><label>Devise</label><input id="f_devise" value="'+esc(state.config.devise)+'"></div>'+
+        '<div class="field"><label>Capacité atelier (OR simultanés)</label><input id="f_capacite" type="number" min="1" value="'+esc(state.config.capaciteAtelier||5)+'"></div>'+
+      '</div>'+
+      '<button class="btn" id="saveDevise">Enregistrer</button>'+
+    '</div>'+
     '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Comptes ('+utilisateurs.length+')</h3><button class="btn primary" id="newUser">+ Utilisateur</button></div>'+
     '<div class="toolbar"><input type="search" id="userSearch" placeholder="Rechercher un compte…"></div>'+
     '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Onglets</th><th>Statut</th><th></th></tr></thead><tbody id="userTbody"></tbody></table></div>';
@@ -2168,9 +2376,11 @@ VIEWS.parametres = async function(view){
   document.getElementById("newUser").addEventListener("click", ()=>openUtilisateurForm());
   document.getElementById("saveDevise").addEventListener("click", async ()=>{
     const devise = document.getElementById("f_devise").value.trim() || "FCFA";
-    await state.db.doc("config/general").set({ devise });
-    state.config.devise = devise;
-    toast("Devise mise à jour."); renderView();
+    const entreprise = document.getElementById("f_entreprise").value.trim();
+    const capaciteAtelier = Number(document.getElementById("f_capacite").value)||5;
+    await state.db.doc("config/general").set({ devise, entreprise, capaciteAtelier });
+    state.config.devise = devise; state.config.entreprise = entreprise; state.config.capaciteAtelier = capaciteAtelier;
+    toast("Paramètres enregistrés."); renderView();
   });
 };
 
@@ -2347,7 +2557,9 @@ async function init(){
   try{
     const cfg = await getOne("config","general");
     if(cfg && cfg.devise) state.config.devise = cfg.devise;
-  }catch(e){ /* devise falls back to default, non-blocking */ }
+    if(cfg && cfg.entreprise) state.config.entreprise = cfg.entreprise;
+    if(cfg && cfg.capaciteAtelier!=null) state.config.capaciteAtelier = cfg.capaciteAtelier;
+  }catch(e){ /* config falls back to defaults, non-blocking */ }
 
   const { data: { session } } = await sb.auth.getSession();
   if(session && session.user){
