@@ -657,11 +657,23 @@ function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function actingUserName(){ return state.actingUser ? state.actingUser.nom : "Inconnu"; }
 function actingUserRole(){ return state.actingUser ? state.actingUser.role : null; }
 function isAdmin(){ return !!(state.actingUser && state.actingUser.role === "admin"); }
+// Les pages de détail (fiche véhicule, OR, facture, technicien) ont leur
+// propre state.view.name, distinct de l'onglet qui y mène — sans cette
+// correspondance, un agent ayant accès à "véhicules" se verrait bloqué dès
+// qu'il clique une ligne pour voir le détail.
+const DETAIL_VIEW_TAB = {
+  "vehicule-detail": "vehicules",
+  "atelier-detail": "atelier",
+  "facture-detail": "factures",
+  "technicien-detail": "techniciens",
+};
 function hasTab(key){
   if(!state.actingUser) return false;
   if(isAdmin()) return true;
+  if(key==="manuel") return true;
   if(key==="parametres") return false;
-  return Array.isArray(state.actingUser.tabs) && state.actingUser.tabs.includes(key);
+  const effectiveKey = DETAIL_VIEW_TAB[key] || key;
+  return Array.isArray(state.actingUser.tabs) && state.actingUser.tabs.includes(effectiveKey);
 }
 function toast(msg, kind){
   const wrap = document.getElementById("toastWrap");
@@ -724,6 +736,25 @@ async function ajusterStock(articleId, delta, type, documentType, documentNumero
     type, quantite: delta, documentType, documentNumero,
     utilisateur: actingUserName(), date: todayIso(), commentaire: commentaire||""
   });
+}
+
+/* ---- synchronisation statut véhicule / cycle de l'OR --------------------
+   Évite l'oubli manuel qui fausse le tableau de bord et la Prise en charge :
+   ouvrir un OR (par n'importe quelle porte — devis envoyé ou OR ouvert
+   directement) immobilise le véhicule s'il ne l'est pas déjà ; le clôturer
+   le réactive automatiquement, sauf s'il a un autre OR encore ouvert. */
+async function marquerVehiculeImmobiliseSiNecessaire(vehiculeId){
+  const veh = await getOne("vehicules", vehiculeId);
+  if(veh && veh.statut!=="immobilise"){
+    await state.db.doc("vehicules/"+vehiculeId).update({ statut:"immobilise", immobiliseDepuis: todayIso() });
+  }
+}
+async function reactiverVehiculeApresOr(vehiculeId, orIdFerme){
+  const [veh, ordres] = await Promise.all([getOne("vehicules", vehiculeId), getAll("ordres")]);
+  if(!veh || veh.statut!=="immobilise") return;
+  const autreOrOuvert = ordres.some(o=>o.id!==orIdFerme && o.vehiculeId===vehiculeId && o.statut==="ouvert");
+  if(autreOrOuvert) return;
+  await state.db.doc("vehicules/"+vehiculeId).update({ statut:"actif", immobiliseDepuis:null, motifInactivite:null, detailInactivite:null });
 }
 
 /* --------------------------------------------------------------- modals */
@@ -1785,6 +1816,34 @@ function openDevisForm(vehicules, preselectVehiculeId){
   });
 }
 
+/* ---- envoi à l'atelier : choix du technicien responsable ----------------
+   Optionnel — un OR peut rester "à assigner" — mais c'est le moment où le
+   dossier "atterrit" dans le profil d'un mécanicien précis (visible ensuite
+   sur sa fiche, onglet Techniciens). */
+function openEnvoyerAtelierForm(d){
+  return new Promise(async (resolve)=>{
+    const techniciens = await getAll("techniciens");
+    const body =
+      '<p class="muted" style="margin-top:0;">Un ordre de réparation sera créé avec les pièces du devis (sorties du stock immédiatement) ; la facture sera générée à la clôture de l\'OR.</p>'+
+      '<div class="field"><label>Technicien responsable</label><div id="techSlot"></div></div>';
+    const { close } = openModal("Envoyer le devis "+d.numero+" à l'atelier", body, {
+      footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="send">Envoyer à l\'atelier</button>',
+      onMount(back, closeFn){
+        const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
+          items: [{id:"", nom:"— à assigner plus tard —", metier:""}, ...techniciens],
+          getId:t=>t.id, getLabel:t=> t.id ? technicienLabel(t) : t.nom, placeholder:"Rechercher un technicien…"
+        });
+        back.querySelector("#cancel").addEventListener("click", ()=>{ closeFn(); resolve(null); });
+        back.querySelector("#send").addEventListener("click", ()=>{
+          const tech = techniciens.find(t=>t.id===techPicker.getValue());
+          closeFn();
+          resolve({ technicienResponsableId: tech?tech.id:null, technicienResponsableNom: tech?tech.nom:null });
+        });
+      }
+    });
+  });
+}
+
 async function openDevisDetail(id){
   const [d, vehicules] = await Promise.all([getOne("devis", id), getAll("vehicules")]);
   const veh = vehicules.find(v=>v.id===d.vehiculeId);
@@ -1847,8 +1906,8 @@ async function openDevisDetail(id){
       });
       const toAt = back.querySelector("#toAtelier");
       if(toAt) toAt.addEventListener("click", async ()=>{
-        const ok = await askConfirm("Envoyer le devis "+d.numero+" à l'atelier ? Un ordre de réparation sera créé avec ses pièces (sorties du stock immédiatement) ; la facture sera générée à la clôture de l'OR, une fois les réparations terminées.", "Envoyer à l'atelier");
-        if(!ok) return;
+        const choix = await openEnvoyerAtelierForm(d);
+        if(!choix) return;
         const lignes = d.lignes||[];
         const numero = await nextNumero("or","OR");
         const pieces = lignes.filter(l=>l.type!=="main_oeuvre" && l.articleId).map(l=>({
@@ -1863,13 +1922,15 @@ async function openDevisDetail(id){
         const orRef = await state.db.collection("ordres").add({
           numero, vehiculeId:d.vehiculeId, statut:"ouvert", dateOuverture: todayIso(), dateCloture:null,
           km:null, technicienIds: interventions.map(i=>i.technicienId), pieces, interventions, factureId:null,
+          technicienResponsableId: choix.technicienResponsableId, technicienResponsableNom: choix.technicienResponsableNom,
           devisId: d.id, createdAt: todayIso(), createdBy: actingUserName()
         });
         for(const p of pieces){
           await ajusterStock(p.articleId, -Math.abs(p.quantite||0), "sortie", "or", numero, "Pose sur "+numero+" (depuis devis "+d.numero+")");
         }
         await state.db.doc("devis/"+d.id).update({ statut:"accepte", orId: orRef.id });
-        await logAudit("Envoi devis vers atelier", d.numero+" → "+numero, "");
+        await marquerVehiculeImmobiliseSiNecessaire(d.vehiculeId);
+        await logAudit("Envoi devis vers atelier", d.numero+" → "+numero, choix.technicienResponsableNom||"");
         close();
         toast(moSansTech.length ? "OR "+numero+" créé — "+moSansTech.length+" ligne(s) de main d'œuvre sans technicien à ajouter manuellement." : "OR "+numero+" créé.");
         setView("atelier-detail", { id: orRef.id });
@@ -2070,7 +2131,7 @@ VIEWS.atelier = async function(view, params){
     '<div class="toolbar"><input type="search" id="orSearch" placeholder="Rechercher un n°, une immatriculation…"><select id="filtStatut">'+
       '<option value="">Tous statuts</option><option value="ouvert">Ouvert</option><option value="cloture">Clôturé</option>'+
     "</select></div>"+
-    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Ouverture</th><th>Statut</th><th class="num">Pièces</th><th class="num">Interventions</th></tr></thead><tbody id="tb"></tbody></table></div>';
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Responsable</th><th>Ouverture</th><th>Statut</th><th class="num">Pièces</th><th class="num">Interventions</th></tr></thead><tbody id="tb"></tbody></table></div>';
 
   function draw(){
     const filter = document.getElementById("filtStatut").value;
@@ -2078,13 +2139,13 @@ VIEWS.atelier = async function(view, params){
     const rows = ordres.filter(o=>{
       const veh = vehicules.find(v=>v.id===o.vehiculeId);
       const statusOk = !filter || o.statut===filter;
-      const textOk = !text || (o.numero||"").toLowerCase().includes(text) || (veh&&veh.immatriculation||"").toLowerCase().includes(text);
+      const textOk = !text || (o.numero||"").toLowerCase().includes(text) || (veh&&veh.immatriculation||"").toLowerCase().includes(text) || (o.technicienResponsableNom||"").toLowerCase().includes(text);
       return statusOk && textOk;
     });
     document.getElementById("tb").innerHTML = rows.length ? rows.map(o=>{
       const veh = vehicules.find(v=>v.id===o.vehiculeId);
-      return '<tr class="clickable" data-id="'+o.id+'"><td class="mono">'+esc(o.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+fmtDate(o.dateOuverture)+'</td><td>'+pill(o.statut)+'</td><td class="num">'+(o.pieces||[]).length+'</td><td class="num">'+(o.interventions||[]).length+"</td></tr>";
-    }).join("") : '<tr class="empty-row"><td colspan="6">Aucun ordre de réparation ne correspond.</td></tr>';
+      return '<tr class="clickable" data-id="'+o.id+'"><td class="mono">'+esc(o.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+(o.technicienResponsableNom?esc(o.technicienResponsableNom):'<span class="faint">à assigner</span>')+'</td><td>'+fmtDate(o.dateOuverture)+'</td><td>'+pill(o.statut)+'</td><td class="num">'+(o.pieces||[]).length+'</td><td class="num">'+(o.interventions||[]).length+"</td></tr>";
+    }).join("") : '<tr class="empty-row"><td colspan="7">Aucun ordre de réparation ne correspond.</td></tr>';
     document.querySelectorAll("#tb [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-id")})));
   }
   document.getElementById("filtStatut").value = initialFilter;
@@ -2097,25 +2158,34 @@ VIEWS.atelier = async function(view, params){
 function openOrForm(vehicules){
   const body =
     '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
-    '<div class="field"><label>Kilométrage à l\'entrée</label><input id="f_km" type="number"></div>';
+    '<div class="field"><label>Kilométrage à l\'entrée</label><input id="f_km" type="number"></div>'+
+    '<div class="field"><label>Technicien responsable</label><div id="techSlot"></div></div>';
   const { close } = openModal("Nouvel ordre de réparation", body, {
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Ouvrir l\'OR</button>',
-    onMount(back, close){
+    async onMount(back, close){
+      const techniciens = await getAll("techniciens");
       const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
         items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
+      });
+      const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
+        items: [{id:"", nom:"— à assigner plus tard —", metier:""}, ...techniciens],
+        getId:t=>t.id, getLabel:t=> t.id ? technicienLabel(t) : t.nom, placeholder:"Rechercher un technicien…"
       });
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
         const vehiculeId = vehPicker.getValue();
         if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
+        const tech = techniciens.find(t=>t.id===techPicker.getValue());
         const numero = await nextNumero("or","OR");
         const ref = await state.db.collection("ordres").add({
           numero, vehiculeId, statut:"ouvert", dateOuverture: todayIso(), dateCloture:null,
           km: Number(back.querySelector("#f_km").value)||null, technicienIds:[],
+          technicienResponsableId: tech?tech.id:null, technicienResponsableNom: tech?tech.nom:null,
           pieces:[], interventions:[], factureId:null,
           createdAt: todayIso(), createdBy: actingUserName()
         });
-        await logAudit("Ouverture OR", numero, "");
+        await marquerVehiculeImmobiliseSiNecessaire(vehiculeId);
+        await logAudit("Ouverture OR", numero, tech?tech.nom:"");
         close(); toast("Ordre de réparation ouvert."); setView("atelier-detail",{id:ref.id});
       });
     }
@@ -2132,7 +2202,10 @@ VIEWS["atelier-detail"] = async function(view, params){
   view.innerHTML =
     '<button class="back-link" id="back">&larr; Retour à l\'atelier</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.5rem;">OR '+esc(o.numero)+'</h2>'+
-      '<p class="lede">Véhicule <a href="#" id="vehLink" class="mono">'+esc(veh?veh.immatriculation:"—")+'</a> · Ouvert le '+fmtDate(o.dateOuverture)+"</p></div>"+
+      '<p class="lede">Véhicule <a href="#" id="vehLink" class="mono">'+esc(veh?veh.immatriculation:"—")+'</a> · Ouvert le '+fmtDate(o.dateOuverture)+
+        ' · Responsable : '+(o.technicienResponsableNom ? '<b>'+esc(o.technicienResponsableNom)+'</b>' : '<span class="faint">à assigner</span>')+
+        (o.statut==="ouvert" ? ' <button class="btn small ghost" id="reassignTech">'+(o.technicienResponsableNom?"Réassigner":"Assigner")+'</button>' : "")+
+      "</p></div>"+
       '<div>'+pill(o.statut)+"</div></div>"+
     '<div class="kpi-grid">'+
       '<div class="kpi"><div class="lbl">Pièces posées</div><div class="val">'+fmtMoney(totalPieces)+'</div></div>'+
@@ -2168,6 +2241,8 @@ VIEWS["atelier-detail"] = async function(view, params){
   if(addPieceBtn) addPieceBtn.addEventListener("click", async ()=>openAddPieceToOr(o));
   const addIntervBtn = view.querySelector("#addInterv");
   if(addIntervBtn) addIntervBtn.addEventListener("click", ()=>openAddInterventionToOr(o, techniciens));
+  const reassignBtn = view.querySelector("#reassignTech");
+  if(reassignBtn) reassignBtn.addEventListener("click", ()=>openReassignerTechnicien(o, techniciens));
   const closeBtn = view.querySelector("#closeOr");
   if(closeBtn) closeBtn.addEventListener("click", async ()=>{
     if(!(o.pieces||[]).length && !(o.interventions||[]).length){ toast("Ajoutez au moins une pièce ou une intervention avant de clôturer.", "danger"); return; }
@@ -2185,10 +2260,32 @@ VIEWS["atelier-detail"] = async function(view, params){
       createdAt: todayIso(), createdBy: actingUserName()
     });
     await state.db.doc("ordres/"+o.id).update({ statut:"cloture", dateCloture: todayIso(), factureId: factureRef.id });
+    await reactiverVehiculeApresOr(o.vehiculeId, o.id);
     await logAudit("Clôture OR", o.numero, "Facture "+numero+" générée");
     toast("OR clôturé, facture "+numero+" créée."); setView("facture-detail",{id:factureRef.id});
   });
 };
+
+function openReassignerTechnicien(o, techniciens){
+  const body = '<div class="field"><label>Technicien responsable</label><div id="techSlot"></div></div>';
+  const { close } = openModal("Assigner l'OR "+o.numero, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
+        items: [{id:"", nom:"— à assigner plus tard —", metier:""}, ...techniciens],
+        getId:t=>t.id, getLabel:t=> t.id ? technicienLabel(t) : t.nom,
+        value: o.technicienResponsableId||"", placeholder:"Rechercher un technicien…"
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const tech = techniciens.find(t=>t.id===techPicker.getValue());
+        await state.db.doc("ordres/"+o.id).update({ technicienResponsableId: tech?tech.id:null, technicienResponsableNom: tech?tech.nom:null });
+        await logAudit("Assignation OR", o.numero, tech?tech.nom:"— retiré —");
+        close(); toast("Responsable mis à jour."); setView("atelier-detail",{id:o.id});
+      });
+    }
+  });
+}
 
 async function openAddPieceToOr(o){
   const articles = await getAll("articles");
@@ -2395,9 +2492,13 @@ VIEWS.techniciens = async function(view){
       const t = document.getElementById("techSearch").value.toLowerCase();
       const rows = techniciens.filter(x=>!t || (x.nom||"").toLowerCase().includes(t) || (METIERS[x.metier]||"").toLowerCase().includes(t));
       document.getElementById("techTbody").innerHTML = rows.length ? rows.map(x=>
-        '<tr><td>'+esc(x.nom)+'</td><td>'+esc(METIERS[x.metier]||x.metier)+'</td><td>'+esc(x.telephone||"—")+'</td><td>'+pill(x.statut||"actif")+'</td><td class="row-actions"><button class="btn small" data-edit="'+x.id+'">Modifier</button></td></tr>'
+        '<tr class="clickable" data-profile="'+x.id+'"><td>'+esc(x.nom)+'</td><td>'+esc(METIERS[x.metier]||x.metier)+'</td><td>'+esc(x.telephone||"—")+'</td><td>'+pill(x.statut||"actif")+'</td><td class="row-actions"><button class="btn small" data-edit="'+x.id+'">Modifier</button></td></tr>'
       ).join("") : '<tr class="empty-row"><td colspan="5">Aucun technicien ne correspond.</td></tr>';
-      document.querySelectorAll("#techTbody [data-edit]").forEach(b=>b.addEventListener("click", ()=>openTechnicienForm(techniciens.find(x=>x.id===b.getAttribute("data-edit")))));
+      document.querySelectorAll("#techTbody [data-profile]").forEach(tr=>tr.addEventListener("click", ()=>setView("technicien-detail",{id:tr.getAttribute("data-profile")})));
+      document.querySelectorAll("#techTbody [data-edit]").forEach(b=>b.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        openTechnicienForm(techniciens.find(x=>x.id===b.getAttribute("data-edit")));
+      }));
     }
     draw();
     document.getElementById("techSearch").addEventListener("input", draw);
@@ -2525,6 +2626,58 @@ function openTechnicienForm(existing){
     }
   });
 }
+
+/* ---- Profil technicien --------------------------------------------------
+   Le "profil" demandé n'est pas un compte de connexion : c'est cette fiche,
+   qui rassemble tout ce qui atterrit chez ce mécanicien — les OR dont il est
+   responsable (assignés dès l'envoi du devis à l'atelier, ou à l'ouverture
+   directe d'un OR) et son historique d'interventions déjà facturées. */
+VIEWS["technicien-detail"] = async function(view, params){
+  const t = await getOne("techniciens", params.id);
+  if(!t){ view.innerHTML = '<p class="faint">Technicien introuvable.</p>'; return; }
+  const [ordres, vehicules] = await Promise.all([getAll("ordres"), getAll("vehicules")]);
+  const mesOR = ordres.filter(o=>o.technicienResponsableId===t.id).sort((a,b)=>new Date(b.dateOuverture)-new Date(a.dateOuverture));
+  const orEnCours = mesOR.filter(o=>o.statut==="ouvert");
+  const orClotures = mesOR.filter(o=>o.statut==="cloture");
+
+  const interventions = [];
+  ordres.forEach(o=>{
+    (o.interventions||[]).forEach(i=>{
+      if(i.technicienId===t.id) interventions.push({ ...i, orNumero:o.numero, orId:o.id });
+    });
+  });
+  interventions.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const totalMO = interventions.reduce((s,i)=>s+(Number(i.montant)||0),0);
+
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour aux techniciens</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(t.nom)+'</h2>'+
+      '<p class="lede">'+esc(METIERS[t.metier]||t.metier)+(t.telephone?" · "+esc(t.telephone):"")+'</p></div>'+
+      '<div class="row-actions">'+pill(t.statut||"actif")+'<button class="btn" id="editTech">Modifier</button></div></div>'+
+    (t.statut && t.statut!=="actif" ? '<div class="callout '+(t.statut==="licencie"?"danger":"amber")+'"><span class="lbl">'+esc(TECHNICIEN_STATUTS[t.statut]||t.statut)+'</span><p>'+(t.motifSanction?esc(t.motifSanction):"Aucun motif renseigné.")+(t.dateSanction?" — "+fmtDate(t.dateSanction):"")+'</p></div>' : "")+
+    '<div class="kpi-grid">'+
+      '<div class="kpi"><div class="lbl">OR en cours (responsable)</div><div class="val">'+orEnCours.length+'</div></div>'+
+      '<div class="kpi"><div class="lbl">OR clôturés (responsable)</div><div class="val">'+orClotures.length+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Total main d\'œuvre facturée</div><div class="val">'+fmtMoney(totalMO)+'</div><div class="sub">'+interventions.length+' intervention(s), toutes périodes</div></div>'+
+    "</div>"+
+    '<h3 class="section-title">OR dont il est responsable</h3>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>N°</th><th>Véhicule</th><th>Ouverture</th><th>Statut</th></tr></thead><tbody>'+
+      (mesOR.length ? mesOR.map(o=>{
+        const veh = vehicules.find(v=>v.id===o.vehiculeId);
+        return '<tr class="clickable" data-or="'+o.id+'"><td class="mono">'+esc(o.numero)+'</td><td class="mono">'+esc(veh?veh.immatriculation:"—")+'</td><td>'+fmtDate(o.dateOuverture)+'</td><td>'+pill(o.statut)+"</td></tr>";
+      }).join("") : '<tr class="empty-row"><td colspan="4">Aucun OR assigné à ce technicien pour le moment.</td></tr>')+
+    "</tbody></table></div>"+
+    '<h3 class="section-title">Interventions récentes</h3>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>OR</th><th>Description</th><th class="num">Montant</th></tr></thead><tbody>'+
+      (interventions.length ? interventions.slice(0,25).map(i=>
+        '<tr class="clickable" data-or="'+i.orId+'"><td>'+fmtDate(i.date)+'</td><td class="mono">'+esc(i.orNumero)+'</td><td>'+esc(i.description)+'</td><td class="num mono">'+fmtMoney(i.montant)+"</td></tr>"
+      ).join("") : '<tr class="empty-row"><td colspan="4">Aucune intervention enregistrée.</td></tr>')+
+    "</tbody></table></div>";
+
+  view.querySelector("#back").addEventListener("click", ()=>setView("techniciens"));
+  view.querySelector("#editTech").addEventListener("click", ()=>openTechnicienForm(t));
+  view.querySelectorAll("[data-or]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-or")})));
+};
 
 /* ---- Comptage de stock -------------------------------------------------- */
 VIEWS.comptage = async function(view){
@@ -2692,6 +2845,7 @@ const MANUEL_SECTIONS = [
       <li><b>Immobilisé</b> : à l'arrêt pour réparation. Un <b>motif</b> devient alors obligatoire — Mécanique, Tôlerie, Peinture ou Documents administratifs — accompagné d'une précision libre des éléments concernés (ex. « plaquettes avant, pare-choc arrière »). Ces informations servent à préparer le devis et à commander les bonnes pièces sans attendre.</li>
       <li><b>Sorti de flotte</b> : véhicule qui n'est plus suivi.</li>
     </ul>
+    <p><b>Ce statut change aussi tout seul</b> pour éviter les oublis : dès qu'un ordre de réparation s'ouvre pour un véhicule (devis envoyé à l'atelier, ou OR ouvert directement), il passe automatiquement "Immobilisé" s'il ne l'était pas déjà. À la clôture de cet OR, il repasse automatiquement "Actif" — sauf s'il a un autre OR encore ouvert en parallèle. Le motif reste à préciser à la main si l'automatisme l'a laissé vide.</p>
     <p>Depuis la fiche d'un véhicule immobilisé, le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le détail, à compléter avec les références de pièces nécessaires.</p>
     <p><b>Import CSV :</b> le bouton "Importer CSV" propose un modèle avec les colonnes attendues (immatriculation, marque, modèle, groupe, type, contrat, chauffeur, téléphone, statut). Les en-têtes sont reconnus même avec des variantes d'accents ou de casse.</p>
   `},
@@ -2709,19 +2863,19 @@ const MANUEL_SECTIONS = [
     <p>Un devis regroupe les pièces et prestations de main d'œuvre proposées pour un véhicule, avec une durée estimée de réparation en jours.</p>
     <p><b>Cycle de vie :</b> Brouillon → Envoyé → Accepté ou Refusé. Un devis accepté peut ensuite être :</p>
     <ul>
-      <li><b>Envoyé à l'atelier</b> : crée un ordre de réparation, les pièces sont sorties du stock immédiatement, la facture sera générée à la clôture de l'OR.</li>
+      <li><b>Envoyé à l'atelier</b> : crée un ordre de réparation, les pièces sont sorties du stock immédiatement, la facture sera générée à la clôture de l'OR. Ce moment demande de choisir un <b>technicien responsable</b> (ou "à assigner plus tard") — c'est ce qui fait "atterrir" l'OR dans le profil de ce mécanicien, visible sur sa fiche dans l'onglet <a href="#m-techniciens">Techniciens</a>.</li>
       <li><b>Converti directement en facture</b> : pour une réparation rapide sans passer par un ordre de réparation formel.</li>
     </ul>
     <p>Le montant de la main d'œuvre est toujours fixé librement ligne par ligne (jamais calculé automatiquement), avec assignation optionnelle à un technicien.</p>
     <p>Un administrateur peut <b>supprimer définitivement</b> un devis (utile pour nettoyer des essais) — action irréversible, à distinguer d'un devis simplement marqué "Refusé".</p>
   `},
   { id:"atelier", title:"Atelier (ordres de réparation)", html:`
-    <p>Un ordre de réparation (OR) naît de l'envoi d'un devis à l'atelier, ou peut être ouvert directement pour un véhicule. Tant qu'il est <b>ouvert</b>, on peut :</p>
+    <p>Un ordre de réparation (OR) naît de l'envoi d'un devis à l'atelier, ou peut être ouvert directement pour un véhicule — dans les deux cas, un <b>technicien responsable</b> peut être choisi (ou laissé "à assigner plus tard", puis réglé à tout moment avec le bouton "Assigner"/"Réassigner" sur la fiche de l'OR). Tant qu'il est <b>ouvert</b>, on peut :</p>
     <ul>
       <li>Ajouter des pièces — sorties du stock au moment de l'ajout, pas à la clôture.</li>
-      <li>Ajouter des interventions de main d'œuvre — description libre, montant fixé librement, technicien assigné.</li>
+      <li>Ajouter des interventions de main d'œuvre — description libre, montant fixé librement, technicien assigné (qui peut être différent du responsable si plusieurs personnes travaillent sur le même véhicule).</li>
     </ul>
-    <p>À la clôture de l'OR, la facture correspondante est générée automatiquement avec l'ensemble des pièces et interventions.</p>
+    <p>À la clôture de l'OR, la facture correspondante est générée automatiquement avec l'ensemble des pièces et interventions, et le véhicule repasse automatiquement "Actif" (voir <a href="#m-vehicules">Véhicules</a>).</p>
     <p>Le nombre d'OR ouverts en même temps est comparé à la <b>capacité de l'atelier</b> (réglable dans Paramètres) pour alimenter les recommandations de l'onglet <a href="#m-triage">Prise en charge</a>.</p>
   `},
   { id:"factures", title:"Factures", html:`
@@ -2747,6 +2901,7 @@ const MANUEL_SECTIONS = [
       <li><b>Actif</b> : peut être assigné à de nouvelles interventions.</li>
       <li><b>Suspendu</b> / <b>Licencié</b> : la fiche reste, avec un motif et une date optionnels. Le statut apparaît simplement entre parenthèses partout où son nom est proposé (listes d'assignation), mais toutes ses interventions passées restent visibles et comptent normalement dans la synthèse mensuelle.</li>
     </ul>
+    <p><b>Profil d'un technicien :</b> cliquer sur son nom dans la liste ouvre sa fiche complète — les OR dont il est <b>responsable</b> (assignés dès l'envoi du devis à l'atelier ou à l'ouverture d'un OR, voir <a href="#m-atelier">Atelier</a>), en cours et clôturés, ainsi que l'historique de ses interventions facturées. Pas besoin d'un compte de connexion séparé : n'importe qui ayant accès à cet onglet peut consulter "ce qui est arrivé chez untel".</p>
     <p>La <b>synthèse mensuelle</b> (deuxième onglet de cette page) additionne, par technicien, tous les montants de main d'œuvre du mois choisi — ordres de réparation et factures directes confondus — pour préparer la paie. Export CSV disponible.</p>
   `},
   { id:"comptage", title:"Comptage de stock", html:`
