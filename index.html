@@ -3119,6 +3119,7 @@ const MANUEL_SECTIONS = [
       <li><b>En réparation</b> : véhicules ayant un ordre de réparation ouvert.</li>
       <li><b>En attente de prise en charge</b> : immobilisés mais pas encore en réparation — ce chiffre correspond exactement à la file de l'onglet <a href="#m-triage">Prise en charge</a>.</li>
       <li><b>Réparés cette semaine / ce mois-ci</b> : ordres de réparation clôturés depuis lundi, et depuis le 1er du mois.</li>
+      <li><b>Sinistrés</b> : véhicules accidentés pris en charge par l'assurance dans un autre garage — comptés à part, ils ne pèsent pas sur les indicateurs d'immobilisation ci-dessus (voir <a href="#m-vehicules">Véhicules</a>).</li>
     </ul>
     <p>En bas : les véhicules avec le plus d'impayés, et les références sous seuil à réapprovisionner en priorité.</p>
   `},
@@ -3212,14 +3213,18 @@ const MANUEL_SECTIONS = [
   { id:"parametres", title:"Paramètres", html:`
     <p>Réservé aux administrateurs.</p>
     <p><b>Comptes :</b> la création se fait en deux étapes — d'abord dans Supabase (Authentication → Users → Add user, avec un email au format <span class="mono">identifiant@cambouis.local</span>), puis ici avec « + Utilisateur » en collant le User UID généré. La révocation, elle, se fait entièrement ici en décochant "Compte actif".</p>
-    <p><b>Changer un mot de passe :</b> PartsFlow n'a pas de bouton "mot de passe oublié" et n'en a pas besoin — les identifiants de connexion sont des adresses fictives (<span class="mono">identifiant@cambouis.local</span>), donc un email de réinitialisation ne peut de toute façon arriver nulle part. Le changement se fait entièrement côté administrateur, dans Supabase :</p>
+    <p><b>Changer un mot de passe :</b> PartsFlow n'a pas de bouton "mot de passe oublié" et n'en a pas besoin — les identifiants de connexion sont des adresses fictives (<span class="mono">identifiant@cambouis.local</span>). Sur la fiche d'un compte dans Supabase, l'option "Reset password" n'envoie qu'un <b>email</b> de récupération — inutile ici, cet email n'arrivera jamais nulle part. Il n'existe pas de champ pour taper un nouveau mot de passe directement dans le dashboard : il faut passer par l'API d'administration Supabase, en ligne de commande :</p>
     <ol>
-      <li>Aller sur <span class="mono">Authentication → Users</span> dans le tableau de bord Supabase.</li>
-      <li>Cliquer sur le compte concerné (repérable par son email <span class="mono">identifiant@cambouis.local</span>).</li>
-      <li>Choisir "Reset password" (ou l'option équivalente pour définir un nouveau mot de passe) et saisir le nouveau mot de passe.</li>
-      <li>Communiquer ce nouveau mot de passe à la personne concernée par un canal sûr (pas par écrit dans un endroit partagé).</li>
+      <li>Récupérer l'<b>UID</b> du compte : Supabase → <span class="mono">Authentication → Users</span>, colonne UID de la ligne concernée.</li>
+      <li>Récupérer la clé <b>service_role</b> : Supabase → <span class="mono">Project Settings → API Keys</span>, section des clés secrètes. À ne jamais coller ailleurs que dans la commande ci-dessous — jamais dans un fichier de l'appli, jamais communiquée à qui que ce soit : quiconque la possède a un accès total à la base, RLS ou pas.</li>
+      <li>Dans un <b>vrai terminal</b> (celui du Mac — pas l'éditeur SQL de Supabase, qui n'accepte que du SQL et rejettera cette commande), lancer, en remplaçant l'UID, la clé et le mot de passe :</li>
     </ol>
-    <p>Cette procédure sert aussi bien à réinitialiser un mot de passe oublié qu'à en changer un par précaution. Rien à faire côté PartsFlow lui-même — la personne se reconnecte simplement avec le nouveau mot de passe à son prochain accès.</p>
+    <div style="white-space:pre-wrap; word-break:break-word; background:var(--faint-soft); padding:12px 14px; border-radius:var(--radius); font-family:'IBM Plex Mono'; font-size:0.78rem; margin-bottom:12px;">curl -X PUT 'https://akyfnanyukhlqtawgskj.supabase.co/auth/v1/admin/users/UID_DU_COMPTE' \
+  -H "apikey: CLE_SERVICE_ROLE" \
+  -H "Authorization: Bearer CLE_SERVICE_ROLE" \
+  -H "Content-Type: application/json" \
+  -d '{"password": "NouveauMotDePasse"}'</div>
+    <p>Une réponse JSON avec les informations du compte (pas de champ d'erreur) confirme que le mot de passe a changé. Communiquer le nouveau mot de passe à la personne concernée par un canal sûr, jamais par écrit dans un endroit partagé.</p>
     <p><b>Général :</b> nom de l'entreprise (affiché en en-tête des documents imprimés), devise, et capacité de l'atelier (nombre d'ordres de réparation ouverts en parallèle) utilisée par l'onglet Prise en charge.</p>
     <p><b>Zone dangereuse :</b> le bouton "Réinitialiser l'application" vide véhicules, stock, fournisseurs, achats, devis, factures, ordres de réparation, mouvements de stock, comptages et journal, et remet les numéros de documents à 1. Les comptes utilisateurs, les fiches techniciens et les paramètres généraux ne sont pas touchés. Cette action est irréversible : il faut taper le mot <span class="mono">REINITIALISER</span> dans la fenêtre de confirmation pour l'activer, afin d'éviter tout clic accidentel.</p>
   `},
@@ -3294,7 +3299,7 @@ function openUtilisateurForm(existing){
       (existing ? '<div class="field"><label>Statut</label><label class="checkbox-row" style="margin-top:9px;"><input type="checkbox" id="f_active" '+(u.active!==false?"checked":"")+'> Compte actif (décochez pour révoquer)</label></div>' : '<div></div>')+
     "</div>"+
     '<div class="field" id="tabsField"><label>Onglets accessibles (agent uniquement — un administrateur voit tout)</label><div class="tabs-grid">'+tabsHtml+'</div></div>'+
-    (existing ? '<p class="faint" style="margin-top:10px;">Pour changer le mot de passe de ce compte, fais-le dans Supabase : Authentication → Users → (le compte) → Reset password.</p>' : "");
+    (existing ? '<p class="faint" style="margin-top:10px;">Pour changer le mot de passe de ce compte, voir le manuel d\'utilisation (Paramètres → section Paramètres) — ça passe par l\'API d\'administration Supabase, pas par un simple bouton du dashboard.</p>' : "");
   const { close } = openModal(existing ? "Modifier le compte" : "Nouvel utilisateur", body, {
     wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
