@@ -2138,6 +2138,47 @@ function openEnvoyerAtelierForm(d){
   });
 }
 
+/* ---- Acompte sur un devis -------------------------------------------------
+   Un devis n'a pas de facture tant qu'il n'est pas converti — mais un client
+   peut très bien verser un acompte avant. On l'enregistre ici (même forme
+   qu'un règlement de facture) ; il est automatiquement reporté comme premier
+   règlement de la facture le jour où ce devis se convertit (directement ou
+   via un OR), pour que le solde dû tienne compte de ce qui a déjà été payé. */
+function openAjouterAcompteForm(d){
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Montant</label><input id="f_montant" type="number" value="0"></div>'+
+      '<div class="field"><label>Date</label><input id="f_date" type="date" value="'+todayIso().slice(0,10)+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Mode de paiement</label><select id="f_mode">'+
+        ["Espèces","Virement","Mobile money","Chèque"].map(m=>'<option value="'+m+'">'+m+"</option>").join("")+
+      "</select></div>"+
+      '<div class="field"><label>Référence (optionnel)</label><input id="f_refpay" placeholder="N° de transaction, chèque…"></div>'+
+    "</div>";
+  const { close } = openModal("Enregistrer un acompte — "+d.numero, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", ()=>{ close(); openDevisDetail(d.id); });
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const montant = Number(back.querySelector("#f_montant").value);
+        if(!montant || montant<=0){ toast("Montant invalide.", "danger"); return; }
+        const acompte = {
+          date: back.querySelector("#f_date").value || todayIso(),
+          montant, mode: back.querySelector("#f_mode").value,
+          reference: back.querySelector("#f_refpay").value.trim(),
+          utilisateur: actingUserName()
+        };
+        const acomptes = [...(d.acomptes||[]), acompte];
+        const acompteTotal = (d.acompteTotal||0) + montant;
+        await state.db.doc("devis/"+d.id).update({ acomptes, acompteTotal });
+        await logAudit("Acompte devis", d.numero, fmtMoney(montant)+" ("+acompte.mode+")");
+        close(); toast("Acompte enregistré."); openDevisDetail(d.id);
+      });
+    }
+  });
+}
+
 async function openDevisDetail(id){
   const [d, vehicules] = await Promise.all([getOne("devis", id), getAll("vehicules")]);
   const veh = vehicules.find(v=>v.id===d.vehiculeId);
@@ -2145,12 +2186,21 @@ async function openDevisDetail(id){
   const lignesHtml = (d.lignes||[]).map(l=>
     '<tr><td>'+(l.type==="main_oeuvre"?'<span class="faint">Main d\'œuvre</span> — ':"")+esc(l.designation||l.reference)+'</td><td class="num mono">'+l.quantite+'</td><td class="num mono">'+fmtMoney(l.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(computeLigneMontant(l))+"</td></tr>"
   ).join("");
+  const acompteTotal = d.acompteTotal||0;
+  const acomptesHtml = (d.acomptes||[]).length
+    ? '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>Mode</th><th>Référence</th><th class="num">Montant</th></tr></thead><tbody>'+
+        d.acomptes.map(a=>'<tr><td>'+fmtDate(a.date)+'</td><td>'+esc(a.mode)+'</td><td>'+esc(a.reference||"—")+'</td><td class="num mono">'+fmtMoney(a.montant)+"</td></tr>").join("")+
+      "</tbody></table></div>"
+    : "";
   const body =
     '<p class="muted" style="margin-top:0;">Véhicule : <b class="mono">'+esc(veh?veh.immatriculation:"—")+'</b> · Statut : '+pill(d.statut)+" · Date : "+fmtDate(d.date)+(d.dureeEstimeeJours?" · Durée estimée : "+d.dureeEstimeeJours+" j":"")+"</p>"+
     '<table class="lines-table"><thead><tr><th>Ligne</th><th>Qté</th><th>P.U.</th><th>Montant</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
     '<div class="lines-total"><span class="muted">Total devis</span><b>'+fmtMoney(total)+"</b></div>"+
     (d.factureId ? '<div class="callout"><span class="lbl">Converti</span><p>Ce devis a été converti directement en facture.</p></div>' : "")+
-    (d.orId ? '<div class="callout"><span class="lbl">À l\'atelier</span><p>Ce devis a été envoyé à l\'atelier sous forme d\'ordre de réparation.</p></div>' : "");
+    (d.orId ? '<div class="callout"><span class="lbl">À l\'atelier</span><p>Ce devis a été envoyé à l\'atelier sous forme d\'ordre de réparation.</p></div>' : "")+
+    '<h3 class="section-title" style="margin-top:20px;">Acompte'+(acompteTotal>0?' — '+fmtMoney(acompteTotal)+' reçu'+(d.acomptes.length>1?"s":""):"")+'</h3>'+
+    acomptesHtml+
+    (!d.factureId ? '<button class="btn small" id="addAcompte">+ Enregistrer un acompte</button>' : '<p class="faint">Ce devis est déjà facturé — un nouvel acompte se gère directement sur la facture.</p>');
 
   const statusButtons = [];
   if(!d.factureId && !d.orId){
@@ -2165,6 +2215,8 @@ async function openDevisDetail(id){
     onMount(back, close){
       back.querySelector("#cl").addEventListener("click", close);
       back.querySelector("#printDev").addEventListener("click", ()=> printDocument("devis", d, veh));
+      const addAcompteBtn = back.querySelector("#addAcompte");
+      if(addAcompteBtn) addAcompteBtn.addEventListener("click", ()=>{ close(); openAjouterAcompteForm(d); });
       const delB = back.querySelector("#deleteDev");
       if(delB) delB.addEventListener("click", async ()=>{
         const ok = await askConfirm("Supprimer définitivement le devis "+d.numero+" ? Cette action est irréversible — à réserver aux données de test.", "Supprimer définitivement");
@@ -2185,10 +2237,15 @@ async function openDevisDetail(id){
         if(!ok) return;
         const lignes = (d.lignes||[]).map(l=>({...l, montant: computeLigneMontant(l)}));
         const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
+        // Un acompte versé pendant que le document était encore un devis devient
+        // le premier règlement de la facture, pour que le solde dû en tienne
+        // compte dès sa création — voir openAjouterAcompteForm.
+        const reglementsInitiaux = (d.acomptes||[]).map(a=>({ date:a.date, montant:a.montant, mode:a.mode, reference:a.reference||"Acompte devis", utilisateur:a.utilisateur }));
+        const montantRegle = d.acompteTotal||0;
         const numero = await nextNumero("facture","FAC");
         const factureRef = await state.db.collection("factures").add({
           numero, devisId:d.id, orId:null, vehiculeId:d.vehiculeId, date: todayIso(),
-          lignes, montantTotal, montantRegle:0, statutPaiement:"impayee", reglements:[],
+          lignes, montantTotal, montantRegle, statutPaiement: statutPaiement(montantTotal, montantRegle), reglements: reglementsInitiaux,
           createdAt: todayIso(), createdBy: actingUserName()
         });
         for(const l of lignes){
@@ -2197,8 +2254,8 @@ async function openDevisDetail(id){
           }
         }
         await state.db.doc("devis/"+d.id).update({ statut:"accepte", factureId: factureRef.id });
-        await logAudit("Conversion devis en facture", d.numero+" → "+numero, "");
-        close(); toast("Facture "+numero+" créée."); setView("facture-detail", { id: factureRef.id });
+        await logAudit("Conversion devis en facture", d.numero+" → "+numero, montantRegle>0?"Acompte transféré : "+fmtMoney(montantRegle):"");
+        close(); toast("Facture "+numero+" créée."+(montantRegle>0?" Acompte transféré.":"")); setView("facture-detail", { id: factureRef.id });
       });
       const toAt = back.querySelector("#toAtelier");
       if(toAt) toAt.addEventListener("click", async ()=>{
@@ -2551,16 +2608,24 @@ VIEWS["atelier-detail"] = async function(view, params){
       ...(o.interventions||[]).map(i=>({ type:"main_oeuvre", designation:i.description+" ("+(METIERS[i.metier]||i.metier)+" — "+i.technicienNom+")", quantite:1, prixUnitaire:i.montant, montant:i.montant }))
     ];
     const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
+    // Si cet OR vient d'un devis qui avait déjà reçu un acompte, on le reporte
+    // sur la facture générée à la clôture — même logique que la conversion
+    // directe devis → facture, voir openAjouterAcompteForm.
+    const devisOrigine = o.devisId ? await getOne("devis", o.devisId) : null;
+    const reglementsInitiaux = (devisOrigine && devisOrigine.acomptes || []).map(a=>({ date:a.date, montant:a.montant, mode:a.mode, reference:a.reference||"Acompte devis", utilisateur:a.utilisateur }));
+    const montantRegle = (devisOrigine && devisOrigine.acompteTotal) || 0;
     const numero = await nextNumero("facture","FAC");
     const factureRef = await state.db.collection("factures").add({
       numero, devisId:null, orId:o.id, vehiculeId:o.vehiculeId, date: todayIso(),
-      lignes, montantTotal, montantRegle:0, statutPaiement: montantTotal<=0?"payee":"impayee", reglements:[],
+      lignes, montantTotal, montantRegle,
+      statutPaiement: montantTotal<=0 ? "payee" : statutPaiement(montantTotal, montantRegle),
+      reglements: reglementsInitiaux,
       createdAt: todayIso(), createdBy: actingUserName()
     });
     await state.db.doc("ordres/"+o.id).update({ statut:"cloture", dateCloture: todayIso(), factureId: factureRef.id });
     await reactiverVehiculeApresOr(o.vehiculeId, o.id);
-    await logAudit("Clôture OR", o.numero, "Facture "+numero+" générée");
-    toast("OR clôturé, facture "+numero+" créée."); setView("facture-detail",{id:factureRef.id});
+    await logAudit("Clôture OR", o.numero, "Facture "+numero+" générée"+(montantRegle>0?" (acompte transféré : "+fmtMoney(montantRegle)+")":""));
+    toast("OR clôturé, facture "+numero+" créée."+(montantRegle>0?" Acompte transféré.":"")); setView("facture-detail",{id:factureRef.id});
   });
 };
 
@@ -3180,7 +3245,8 @@ const MANUEL_SECTIONS = [
       <li><b>Converti directement en facture</b> : pour une réparation rapide sans passer par un ordre de réparation formel.</li>
     </ul>
     <p>Le montant de la main d'œuvre est toujours fixé librement ligne par ligne (jamais calculé automatiquement), avec assignation optionnelle à un technicien.</p>
-    <p>Un administrateur peut <b>supprimer définitivement</b> un devis (utile pour nettoyer des essais) — action irréversible, à distinguer d'un devis simplement marqué "Refusé".</p>
+    <p><b>Acompte :</b> tant qu'un devis n'est pas encore facturé, le bouton <b>+ Enregistrer un acompte</b> permet de noter un versement reçu à l'avance (montant, date, mode, référence) — plusieurs acomptes sont possibles. Le jour où le devis se convertit en facture (directement, ou via un OR clôturé), le total des acomptes devient automatiquement le premier règlement de la facture : le solde dû affiché tient compte de ce qui a déjà été payé, sans ressaisie.</p>
+    <p>Un administrateur peut <b>supprimer définitivement</b> un devis (utile pour nettoyer des essais) — action irréversible, à distinguer d'un devis simplement marqué "Refusé". Un devis déjà converti en facture ne peut plus être supprimé (le bouton disparaît) : la facture le référence, le supprimer casserait cette référence.</p>
   `},
   { id:"atelier", title:"Atelier (ordres de réparation)", html:`
     <p>Un ordre de réparation (OR) naît de l'envoi d'un devis à l'atelier, ou peut être ouvert directement pour un véhicule — dans les deux cas, un <b>technicien responsable</b> peut être choisi (ou laissé "à assigner plus tard", puis réglé à tout moment avec le bouton "Assigner"/"Réassigner" sur la fiche de l'OR). Tant qu'il est <b>ouvert</b>, on peut :</p>
