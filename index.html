@@ -1311,7 +1311,7 @@ VIEWS.vehicules = async function(view, params){
   function drawTous(){
     document.getElementById("tabBody").innerHTML =
       '<div class="view-head"><div><p class="lede">Flotte VTC suivie par PartsFlow — '+vehicules.length+' véhicule(s) enregistré(s).</p></div>'+
-        '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newVehicule">+ Nouveau véhicule</button></div></div>'+
+        '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn" id="newVehicule">+ Nouveau véhicule</button><button class="btn primary" id="newReception">+ Signaler un problème</button></div></div>'+
       '<div class="toolbar"><input type="search" id="vehSearch" placeholder="Rechercher par immatriculation, chauffeur, marque, groupe…"></div>'+
       '<div class="table-wrap"><table class="grid"><thead><tr>'+
         '<th>Immatriculation</th><th>Véhicule</th><th>Chauffeur</th><th>Groupe</th><th>Type</th><th>Contrat</th><th>Statut</th>'+
@@ -1341,6 +1341,7 @@ VIEWS.vehicules = async function(view, params){
     document.getElementById("vehSearch").addEventListener("input", e=>draw(e.target.value));
     document.getElementById("newVehicule").addEventListener("click", ()=> openVehiculeForm());
     document.getElementById("importCsv").addEventListener("click", ()=> openCsvImport("vehicules"));
+    document.getElementById("newReception").addEventListener("click", ()=> openReceptionForm(vehicules));
   }
 
   async function drawEnCours(){
@@ -1361,7 +1362,8 @@ VIEWS.vehicules = async function(view, params){
     }
 
     document.getElementById("tabBody").innerHTML =
-      '<p class="lede">Véhicules immobilisés chez nous, du plus ancien au plus récent — le suivi du signalement jusqu\'au devis. Pour la disponibilité du stock et de l\'atelier, voir l\'onglet <span class="mono">Prise en charge</span>.</p>'+
+      '<div class="view-head"><div><p class="lede">Véhicules immobilisés chez nous, du plus ancien au plus récent — le suivi du signalement jusqu\'au devis. Pour la disponibilité du stock et de l\'atelier, voir l\'onglet <span class="mono">Prise en charge</span>.</p></div>'+
+        '<button class="btn primary" id="newReception">+ Signaler un problème</button></div>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Immatriculation</th><th>Chauffeur</th><th class="num">Depuis</th><th>Étape</th></tr></thead><tbody>'+
         (enCours.length ? enCours.map(v=>{
           const e = etapeAffichee(v);
@@ -1370,6 +1372,7 @@ VIEWS.vehicules = async function(view, params){
           return '<tr class="clickable" data-id="'+v.id+'"><td class="mono">'+esc(v.immatriculation)+'</td><td>'+esc(v.chauffeurNom||"—")+'</td><td class="num mono">'+jours+' j</td><td><span class="pill '+e.cls+'">'+esc(e.label)+'</span></td></tr>';
         }).join("") : '<tr class="empty-row"><td colspan="4">Aucun véhicule en cours de prise en charge.</td></tr>')+
       "</tbody></table></div>";
+    document.getElementById("newReception").addEventListener("click", ()=> openReceptionForm(vehicules));
     document.querySelectorAll("#tabBody [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("vehicule-detail",{id:tr.getAttribute("data-id")})));
   }
 
@@ -1515,6 +1518,64 @@ function openVehiculeForm(existing){
         close();
         toast("Véhicule enregistré.");
         renderView();
+      });
+    }
+  });
+}
+
+/* ---- Fiche de réception ---------------------------------------------------
+   Le formulaire dédié à l'agent qui accueille le chauffeur : plus léger que
+   la fiche véhicule complète (pas de marque/modèle/contrat à toucher), il ne
+   demande que ce qui compte à cet instant précis — quel véhicule, pourquoi,
+   et ce que le chauffeur a constaté. Valider ouvre le dossier de prise en
+   charge (étape "Signalé") exactement comme le ferait la fiche véhicule. */
+function openReceptionForm(vehicules){
+  const body =
+    '<div class="field"><label>Véhicule</label><div id="vehSlot"></div></div>'+
+    '<div id="vehWarn"></div>'+
+    '<div class="field"><label>Motif</label><select id="f_motif">'+
+      '<option value="">— à préciser —</option>'+
+      Object.entries(MOTIFS_INACTIVITE).map(([k,l])=>'<option value="'+k+'">'+l+"</option>").join("")+
+    "</select></div>"+
+    '<div class="field"><label>Constat du chauffeur</label><textarea id="f_constat" rows="3" placeholder="ce que le chauffeur a signalé — ex. bruit au freinage, voyant moteur allumé…"></textarea></div>';
+  const { close } = openModal("Réception d'un véhicule", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer la réception</button>',
+    onMount(back, close){
+      let vehiculeChoisi = null;
+      const saveBtn = back.querySelector("#save");
+      const warnBox = back.querySelector("#vehWarn");
+      mountSearchableSelect(back.querySelector("#vehSlot"), {
+        items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…",
+        onChange:(id)=>{
+          vehiculeChoisi = vehicules.find(v=>v.id===id) || null;
+          if(vehiculeChoisi && (vehiculeChoisi.statut==="immobilise" || vehiculeChoisi.statut==="sinistre")){
+            warnBox.innerHTML = '<div class="callout amber"><span class="lbl">Déjà en cours</span><p>'+esc(vehiculeChoisi.immatriculation)+' est déjà '+(vehiculeChoisi.statut==="sinistre"?"marqué sinistré":"en cours de prise en charge")+'. <a href="#" id="goVeh">Voir sa fiche</a> plutôt que d\'ouvrir un nouveau signalement.</p></div>';
+            saveBtn.disabled = true;
+            const goLink = warnBox.querySelector("#goVeh");
+            if(goLink) goLink.addEventListener("click", (e)=>{ e.preventDefault(); close(); setView("vehicule-detail",{id:vehiculeChoisi.id}); });
+          } else {
+            warnBox.innerHTML = "";
+            saveBtn.disabled = false;
+          }
+        }
+      });
+      back.querySelector("#cancel").addEventListener("click", close);
+      saveBtn.addEventListener("click", async ()=>{
+        if(!vehiculeChoisi){ toast("Choisissez un véhicule.", "danger"); return; }
+        const motif = back.querySelector("#f_motif").value;
+        if(!motif){ toast("Choisissez un motif.", "danger"); return; }
+        const constat = back.querySelector("#f_constat").value.trim();
+        await state.db.doc("vehicules/"+vehiculeChoisi.id).update({
+          statut:"immobilise", motifInactivite: motif, detailInactivite: constat,
+          immobiliseDepuis: todayIso(),
+          etapePriseEnCharge:"signale", receptionPar: actingUserName(), receptionDate: todayIso(),
+          diagnosticTechnicienId:null, diagnosticTechnicienNom:null, diagnosticAssigneDate:null,
+          diagnosticConfirme:null, diagnosticConfirmeDate:null
+        });
+        await logAudit("Réception véhicule", vehiculeChoisi.immatriculation, motif);
+        close();
+        toast("Réception enregistrée — "+vehiculeChoisi.immatriculation+" immobilisé.");
+        setView("vehicule-detail",{id:vehiculeChoisi.id});
       });
     }
   });
@@ -3076,6 +3137,7 @@ const MANUEL_SECTIONS = [
       <li><b>Sorti de flotte</b> : véhicule qui n'est plus suivi.</li>
     </ul>
     <p><b>Ce statut change aussi tout seul</b> pour éviter les oublis : dès qu'un ordre de réparation s'ouvre pour un véhicule (devis envoyé à l'atelier, ou OR ouvert directement), il passe automatiquement "Immobilisé" s'il ne l'était pas déjà. À la clôture de cet OR, il repasse automatiquement "Actif" — sauf s'il a un autre OR encore ouvert en parallèle.</p>
+    <p><b>Réception d'un véhicule :</b> le bouton <b>+ Signaler un problème</b> (onglets "Tous" et "En cours de prise en charge") ouvre la fiche dédiée à l'agent qui accueille le chauffeur — juste le véhicule, le motif et le constat, sans les champs de la fiche véhicule complète (marque, contrat…) qui n'ont rien à faire à cet instant. Valider immobilise le véhicule et ouvre son dossier de prise en charge à l'étape "Signalé". Si le véhicule est déjà immobilisé ou sinistré, le formulaire le signale et propose d'aller directement à sa fiche plutôt que d'ouvrir un doublon.</p>
     <p><b>Dossier de prise en charge (signalement → diagnostic) :</b> sur la fiche d'un véhicule immobilisé, une carte "Diagnostic" suit trois étapes :</p>
     <ol>
       <li><b>Signalé</b> — le constat du chauffeur est enregistré, personne n'a encore été désigné pour vérifier le véhicule.</li>
