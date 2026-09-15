@@ -2161,7 +2161,7 @@ async function openDevisDetail(id){
   }
   openModal("Devis "+d.numero, body, {
     wide:true,
-    footHtml: '<button class="btn ghost" id="cl">Fermer</button><button class="btn" id="printDev">Imprimer / PDF</button>'+statusButtons.join("")+(isAdmin() ? '<button class="btn danger" id="deleteDev">Supprimer</button>' : ""),
+    footHtml: '<button class="btn ghost" id="cl">Fermer</button><button class="btn" id="printDev">Imprimer / PDF</button>'+statusButtons.join("")+(isAdmin() && !d.factureId ? '<button class="btn danger" id="deleteDev">Supprimer</button>' : ""),
     onMount(back, close){
       back.querySelector("#cl").addEventListener("click", close);
       back.querySelector("#printDev").addEventListener("click", ()=> printDocument("devis", d, veh));
