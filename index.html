@@ -469,8 +469,17 @@ function makeDbShim(client){
         if(error) throw error;
       },
       async delete(){
-        const { error } = await client.from(table).delete().eq("id", id);
+        // Sans .select(), Postgres ne renvoie aucune erreur quand la RLS bloque
+        // une suppression : la ligne "ne matche" simplement pas, 0 ligne est
+        // supprimée, et l'appel se termine comme un succès — un vrai piège déjà
+        // rencontré (bouton "Supprimer" qui ne supprimait rien). En demandant
+        // .select() sur le delete, Postgres renvoie les lignes réellement
+        // supprimées : un tableau vide révèle le blocage silencieux.
+        const { data, error } = await client.from(table).delete().eq("id", id).select();
         if(error) throw error;
+        if(!data || data.length===0){
+          throw new Error("Suppression refusée par la base (0 ligne supprimée) — vérifiez que la politique de suppression (migration-6.sql) a bien été exécutée pour cette table.");
+        }
       },
       onSnapshot(next, errCb){
         let stopped = false;
@@ -2160,7 +2169,9 @@ async function openDevisDetail(id){
       if(delB) delB.addEventListener("click", async ()=>{
         const ok = await askConfirm("Supprimer définitivement le devis "+d.numero+" ? Cette action est irréversible — à réserver aux données de test.", "Supprimer définitivement");
         if(!ok) return;
-        await state.db.doc("devis/"+d.id).delete();
+        try{
+          await state.db.doc("devis/"+d.id).delete();
+        }catch(e){ toast("Erreur : "+describeError(e), "danger"); return; }
         await logAudit("Suppression devis", d.numero, "");
         close(); toast("Devis supprimé."); renderView();
       });
@@ -2362,7 +2373,9 @@ VIEWS["facture-detail"] = async function(view, params){
   if(deleteBtn) deleteBtn.addEventListener("click", async ()=>{
     const ok = await askConfirm("Supprimer définitivement la facture "+f.numero+" ? Cette action est irréversible et ne touche pas au stock — à réserver aux données de test.", "Supprimer définitivement");
     if(!ok) return;
-    await state.db.doc("factures/"+f.id).delete();
+    try{
+      await state.db.doc("factures/"+f.id).delete();
+    }catch(e){ toast("Erreur : "+describeError(e), "danger"); return; }
     await logAudit("Suppression facture", f.numero, "");
     toast("Facture supprimée."); setView("factures");
   });
