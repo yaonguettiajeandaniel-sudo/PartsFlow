@@ -134,9 +134,15 @@
   }
   nav.mainnav button:hover{background:var(--faint-soft); color:var(--ink);}
   nav.mainnav button.active{background:var(--accent-soft); color:var(--accent-ink); font-weight:600;}
-  .nav-ico{width:17px; height:17px; display:inline-flex; align-items:center; justify-content:center; color:var(--ink-faint); flex:none;}
+  .nav-ico{width:17px; height:17px; display:inline-flex; align-items:center; justify-content:center; color:var(--ink-faint); flex:none; position:relative;}
   .nav-ico svg{display:block;}
   nav.mainnav button.active .nav-ico{color:var(--accent);}
+  .nav-badge{
+    position:absolute; top:-6px; right:-8px; min-width:14px; height:14px; padding:0 3px;
+    border-radius:100px; font-size:0.6rem; font-weight:700; line-height:14px; text-align:center;
+    font-family:'IBM Plex Mono'; color:#fff; background:var(--danger);
+  }
+  .nav-badge.amber{background:var(--amber);}
   .sidebar-foot{margin-top:auto; padding:14px 18px 0; border-top:1px solid var(--line); font-size:0.72rem; color:var(--ink-faint);}
   @media (min-width:861px){
     #app.sidebar-collapsed{grid-template-columns:64px 1fr;}
@@ -587,6 +593,7 @@ const state = {
   utilisateurs: [],
   config: { devise: "FCFA", entreprise: "", capaciteAtelier: 5 },
   view: { name: "dashboard", params: {} },
+  navBadges: {},
 };
 
 function svgIco(inner){
@@ -1165,20 +1172,66 @@ function setView(name, params){
   location.hash = name + (params && params.id ? ("/"+params.id) : "");
   renderNav();
   renderView();
+  refreshNavBadges();
 }
+// Couleur du badge par onglet — rouge pour "personne n'agit dessus" /
+// bloquant, orange pour "à surveiller, pas urgent". Le nombre lui-même vient
+// de refreshNavBadges(), recalculé à chaque changement d'onglet.
+const NAV_BADGE_COLOR = {
+  vehicules: "danger", triage: "danger", achats: "danger",
+  stock: "amber", atelier: "amber", factures: "amber", comptage: "amber",
+};
 function renderNav(){
   const nav = document.getElementById("mainnav");
   const visible = NAV.filter(n=>hasTab(n.key));
-  nav.innerHTML = visible.map(n=>
-    '<button data-key="'+n.key+'" class="'+(state.view.name===n.key?"active":"")+'" title="'+esc(n.label)+'">'+
-      '<span class="nav-ico">'+n.ico+'</span><span class="nav-label">'+esc(n.label)+'</span>'+
-    "</button>"
-  ).join("");
+  nav.innerHTML = visible.map(n=>{
+    const count = state.navBadges[n.key]||0;
+    const badge = count>0 ? '<span class="nav-badge '+(NAV_BADGE_COLOR[n.key]||"danger")+'">'+(count>99?"99+":count)+'</span>' : "";
+    return '<button data-key="'+n.key+'" class="'+(state.view.name===n.key?"active":"")+'" title="'+esc(n.label)+(count>0?" ("+count+")":"")+'">'+
+      '<span class="nav-ico">'+n.ico+badge+'</span><span class="nav-label">'+esc(n.label)+'</span>'+
+    "</button>";
+  }).join("");
   nav.querySelectorAll("button").forEach(b=>{
     b.addEventListener("click", ()=> setView(b.getAttribute("data-key")));
   });
   document.getElementById("viewTitle").textContent =
     (NAV.find(n=>n.key===state.view.name)||{}).label || "";
+}
+async function refreshNavBadges(){
+  if(!state.actingUser) return;
+  try{
+    const [vehicules, articles, factures, ordres, commandes, comptages] = await Promise.all([
+      getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("commandes"), getAll("comptages")
+    ]);
+    state.navBadges = {
+      vehicules: vehicules.filter(v=>v.statut==="immobilise" && (v.etapePriseEnCharge||"signale")==="signale").length,
+      stock: articles.filter(a=>(Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0)).length,
+      achats: commandes.filter(c=>c.urgente && c.statut!=="soldee").length,
+      atelier: ordres.filter(o=>o.statut==="ouvert" && !o.technicienResponsableId).length,
+      factures: factures.filter(f=>f.statutPaiement==="impayee").length,
+      comptage: comptages.filter(c=>c.statut && c.statut!=="valide").length,
+    };
+    // Bloqué (rupture de stock) réutilise la même logique que l'onglet Triage —
+    // ne recalcule que le nombre, sans dupliquer toute la simulation de réservation.
+    const vehiculesEnReparation = new Set(ordres.filter(o=>o.statut==="ouvert").map(o=>o.vehiculeId));
+    const enAttente = vehicules.filter(v=>v.statut==="immobilise" && !vehiculesEnReparation.has(v.id));
+    const stockSim = {};
+    articles.forEach(a=>{ stockSim[a.id] = Number(a.stockQte)||0; });
+    const devis = await getAll("devis");
+    let nbBloque = 0;
+    enAttente
+      .sort((a,b)=> new Date(a.immobiliseDepuis||0) - new Date(b.immobiliseDepuis||0))
+      .forEach(v=>{
+        const d = devis.filter(x=>x.vehiculeId===v.id && x.statut==="accepte" && !x.orId && !x.factureId).sort((a,b)=>new Date(a.date)-new Date(b.date))[0];
+        if(!d) return;
+        const pieceLignes = (d.lignes||[]).filter(l=>l.type!=="main_oeuvre" && l.articleId);
+        const okStock = pieceLignes.every(l=>(stockSim[l.articleId]!=null?stockSim[l.articleId]:0) >= (Number(l.quantite)||0));
+        pieceLignes.forEach(l=>{ stockSim[l.articleId] = Math.max(0, (stockSim[l.articleId]!=null?stockSim[l.articleId]:0) - (Number(l.quantite)||0)); });
+        if(!okStock) nbBloque++;
+      });
+    state.navBadges.triage = nbBloque;
+  }catch(e){ /* les badges sont un confort, jamais bloquant */ }
+  renderNav();
 }
 
 /* ---- barre latérale rétractable (icônes seules) — préférence mémorisée
@@ -3296,6 +3349,7 @@ const MANUEL_SECTIONS = [
       <li><b>Agent</b> : accès seulement aux onglets choisis par un administrateur pour ce compte (onglet Paramètres toujours masqué).</li>
     </ul>
     <p>Un administrateur peut révoquer un accès à tout moment depuis Paramètres — la personne est déconnectée automatiquement en quelques secondes, même si elle est déjà en train d'utiliser l'application.</p>
+    <p><b>Pastilles du menu :</b> un chiffre sur l'icône d'un onglet (visible même barre latérale réduite, ou en bande horizontale sur téléphone) signale qu'il y a quelque chose à traiter dedans — rouge pour ce qui bloque ou n'avance pas (véhicules signalés sans personne dessus, commandes urgentes, prise en charge bloquée par une rupture de stock), orange pour ce qui mérite un coup d'œil (stock sous seuil, OR sans responsable, factures impayées, comptages en attente). Recalculées à chaque changement d'onglet ; un onglet sans pastille n'a rien en attente pour l'instant.</p>
   `},
   { id:"dashboard", title:"Tableau de bord", html:`
     <p>Vue d'ensemble de l'atelier. Chaque chiffre est cliquable et amène directement au détail correspondant.</p>
@@ -3597,6 +3651,7 @@ async function enterApp(authUser){
   state.view = { name: initial, params: id ? {id} : {} };
   renderNav();
   await renderView();
+  refreshNavBadges();
 }
 function renderLoginScreen(message){
   const screen = document.getElementById("loginScreen");
