@@ -1041,9 +1041,20 @@ function renderLinesEditor(container, items, articles, opts){
   opts = opts || {};
   const allowMainOeuvre = opts.allowMainOeuvre !== false;
   const techniciens = opts.techniciens || [];
+  // Signale une rupture de stock ligne par ligne pendant la saisie (devis,
+  // facture directe) — pas pour une commande fournisseur (opts.warnStock
+  // non passé), où "pas assez de stock" est justement la raison d'acheter.
+  function ruptureNoteFor(l){
+    if(!opts.warnStock || l.type==="main_oeuvre" || !l.articleId) return "";
+    const art = articles.find(a=>a.id===l.articleId);
+    const dispo = art ? Number(art.stockQte)||0 : 0;
+    const besoin = Number(l.quantite)||0;
+    return besoin > dispo ? "Rupture — dispo "+dispo : "";
+  }
   function redraw(){
     const rows = items.map((l,i)=>{
       const isPiece = l.type !== "main_oeuvre";
+      const rupture = ruptureNoteFor(l);
       return (
         '<tr data-i="'+i+'">'+
           '<td style="width:110px;">'+
@@ -1058,7 +1069,9 @@ function renderLinesEditor(container, items, articles, opts){
                 (techniciens.length ? '<div class="ssel-slot" data-slot="tech" data-i="'+i+'"></div>' : '')
             )+
           '</td>'+
-          '<td style="width:70px;"><input type="number" min="0" step="1" data-f="quantite" data-i="'+i+'" value="'+(l.quantite==null?1:l.quantite)+'"></td>'+
+          '<td style="width:70px;"><input type="number" min="0" step="1" data-f="quantite" data-i="'+i+'" value="'+(l.quantite==null?1:l.quantite)+'">'+
+            '<div class="rupture-note" data-i="'+i+'" style="color:var(--danger); font-size:.66rem; margin-top:2px; white-space:nowrap;">'+esc(rupture)+'</div>'+
+          '</td>'+
           '<td style="width:120px;"><input type="number" min="0" step="1" data-f="prixUnitaire" data-i="'+i+'" value="'+(l.prixUnitaire==null?"":l.prixUnitaire)+'"></td>'+
           '<td class="num" style="width:110px;">'+fmtMoney(computeLigneMontant(l))+'</td>'+
           '<td style="width:34px;"><button type="button" class="btn ghost small" data-remove="'+i+'" title="Retirer">&times;</button></td>'+
@@ -1123,6 +1136,8 @@ function renderLinesEditor(container, items, articles, opts){
           const rowMontant = container.querySelector('tr[data-i="'+i+'"] td.num');
           if(rowMontant) rowMontant.textContent = fmtMoney(computeLigneMontant(items[i]));
           if(totalEl) totalEl.textContent = fmtMoney(items.reduce((s,l)=>s+computeLigneMontant(l),0));
+          const noteEl = container.querySelector('.rupture-note[data-i="'+i+'"]');
+          if(noteEl) noteEl.textContent = ruptureNoteFor(items[i]);
           return;
         }
         items[i][f] = v;
@@ -1348,7 +1363,7 @@ VIEWS.vehicules = async function(view, params){
     }
     draw("");
     document.getElementById("vehSearch").addEventListener("input", e=>draw(e.target.value));
-    document.getElementById("newVehicule").addEventListener("click", ()=> openVehiculeForm());
+    document.getElementById("newVehicule").addEventListener("click", ()=> openNouveauVehiculeForm());
     document.getElementById("importCsv").addEventListener("click", ()=> openCsvImport("vehicules"));
     document.getElementById("newReception").addEventListener("click", ()=> openReceptionForm(vehicules));
   }
@@ -1407,6 +1422,56 @@ VIEWS.vehicules = async function(view, params){
     });
   });
 };
+
+/* ---- Nouveau véhicule : formulaire distinct de "Modifier" ----------------
+   Un véhicule qui rejoint la flotte n'est pas forcément en panne — il n'a
+   donc rien à voir avec les champs de statut/immobilisation/sinistre, qui ne
+   concernent que le suivi d'un véhicule déjà existant. Toujours créé Actif ;
+   passer en Immobilisé/Sinistré se fait ensuite via "Modifier" ou la fiche
+   de réception ("+ Signaler un problème"). */
+function openNouveauVehiculeForm(){
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Immatriculation</label><input id="f_immat" placeholder="AB-1234-CD"></div>'+
+      '<div class="field"><label>Marque</label><input id="f_marque"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Modèle</label><input id="f_modele"></div>'+
+      '<div class="field"><label>Contrat</label><input id="f_contrat" placeholder="ex. Classique, Vente"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Groupe</label><input id="f_groupe" placeholder="ex. A"></div>'+
+      '<div class="field"><label>Type</label><input id="f_type" placeholder="ex. Berline, Cargo"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Chauffeur</label><input id="f_chauffeur"></div>'+
+      '<div class="field"><label>Téléphone chauffeur</label><input id="f_tel"></div>'+
+    "</div>";
+  const { close } = openModal("Nouveau véhicule", body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
+        if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
+        const data = {
+          immatriculation: immat, statut:"actif",
+          marque: back.querySelector("#f_marque").value.trim(),
+          modele: back.querySelector("#f_modele").value.trim(),
+          groupe: back.querySelector("#f_groupe").value.trim(),
+          type: back.querySelector("#f_type").value.trim(),
+          contrat: back.querySelector("#f_contrat").value.trim(),
+          chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
+          chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
+          createdAt: todayIso(),
+        };
+        await state.db.collection("vehicules").add(data);
+        await logAudit("Création véhicule", immat, "");
+        close(); toast("Véhicule ajouté à la flotte."); renderView();
+      });
+    }
+  });
+}
 
 function openVehiculeForm(existing){
   const v = existing || {};
@@ -2086,7 +2151,7 @@ function openDevisForm(vehicules, preselectVehiculeId){
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer le devis</button>',
     async onMount(back, close){
       const [articles, techniciens] = await Promise.all([getAll("articles"), getAll("techniciens")]);
-      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens });
+      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens, warnStock:true });
       const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
         items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""),
         value: preselectVehiculeId||"", placeholder:"Rechercher une immatriculation…"
@@ -2114,6 +2179,34 @@ function openDevisForm(vehicules, preselectVehiculeId){
    Optionnel — un OR peut rester "à assigner" — mais c'est le moment où le
    dossier "atterrit" dans le profil d'un mécanicien précis (visible ensuite
    sur sa fiche, onglet Techniciens). */
+/* ---- Contrôle de stock avant d'envoyer un véhicule en atelier -----------
+   Sans ce contrôle, envoyer un devis à l'atelier (ou le facturer, ou une
+   vente comptoir) décomptait le stock sans jamais vérifier qu'il y en avait
+   assez — un véhicule pouvait partir en réparation pour une pièce qui
+   n'existait pas. Seul un administrateur peut passer outre (la pièce est
+   parfois réparable, ou sourcée autrement) ; un agent est bloqué net. */
+function calculerRuptures(lignes, articles){
+  const ruptures = [];
+  (lignes||[]).filter(l=>l.type!=="main_oeuvre" && l.articleId).forEach(l=>{
+    const art = articles.find(a=>a.id===l.articleId);
+    const dispo = art ? Number(art.stockQte)||0 : 0;
+    const besoin = Number(l.quantite)||0;
+    if(besoin > dispo) ruptures.push({ reference: art?art.reference:(l.reference||"?"), besoin, dispo });
+  });
+  return ruptures;
+}
+async function confirmerRuptureStock(ruptures){
+  const detail = ruptures.map(r=>r.reference+" (besoin "+r.besoin+", dispo "+r.dispo+")").join(", ");
+  if(!isAdmin()){
+    toast("Stock insuffisant : "+detail+" — seul un administrateur peut autoriser l'envoi malgré la rupture.", "danger");
+    return false;
+  }
+  return await askConfirm(
+    "Stock insuffisant : "+detail+". Envoyer quand même ? À réserver aux cas où la pièce est réparable ou sourcée autrement.",
+    "Envoyer malgré la rupture"
+  );
+}
+
 function openEnvoyerAtelierForm(d){
   return new Promise(async (resolve)=>{
     const techniciens = await getAll("techniciens");
@@ -2233,7 +2326,11 @@ async function openDevisDetail(id){
       const trB = back.querySelector("#toRefuse"); if(trB) trB.addEventListener("click", setStatut("refuse"));
       const tf = back.querySelector("#toFacture");
       if(tf) tf.addEventListener("click", async ()=>{
-        const ok = await askConfirm("Convertir le devis "+d.numero+" en facture ? Les pièces seront décomptées du stock.", "Convertir");
+        const articlesCheck = await getAll("articles");
+        const ruptures = calculerRuptures(d.lignes, articlesCheck);
+        const ok = ruptures.length
+          ? await confirmerRuptureStock(ruptures)
+          : await askConfirm("Convertir le devis "+d.numero+" en facture ? Les pièces seront décomptées du stock.", "Convertir");
         if(!ok) return;
         const lignes = (d.lignes||[]).map(l=>({...l, montant: computeLigneMontant(l)}));
         const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
@@ -2254,11 +2351,17 @@ async function openDevisDetail(id){
           }
         }
         await state.db.doc("devis/"+d.id).update({ statut:"accepte", factureId: factureRef.id });
-        await logAudit("Conversion devis en facture", d.numero+" → "+numero, montantRegle>0?"Acompte transféré : "+fmtMoney(montantRegle):"");
+        await logAudit("Conversion devis en facture", d.numero+" → "+numero, (ruptures.length?"Facturé malgré rupture de stock. ":"")+(montantRegle>0?"Acompte transféré : "+fmtMoney(montantRegle):""));
         close(); toast("Facture "+numero+" créée."+(montantRegle>0?" Acompte transféré.":"")); setView("facture-detail", { id: factureRef.id });
       });
       const toAt = back.querySelector("#toAtelier");
       if(toAt) toAt.addEventListener("click", async ()=>{
+        const articlesCheck = await getAll("articles");
+        const ruptures = calculerRuptures(d.lignes, articlesCheck);
+        if(ruptures.length){
+          const ok = await confirmerRuptureStock(ruptures);
+          if(!ok) return;
+        }
         const choix = await openEnvoyerAtelierForm(d);
         if(!choix) return;
         const lignes = d.lignes||[];
@@ -2283,7 +2386,7 @@ async function openDevisDetail(id){
         }
         await state.db.doc("devis/"+d.id).update({ statut:"accepte", orId: orRef.id });
         await marquerVehiculeImmobiliseSiNecessaire(d.vehiculeId);
-        await logAudit("Envoi devis vers atelier", d.numero+" → "+numero, choix.technicienResponsableNom||"");
+        await logAudit("Envoi devis vers atelier", d.numero+" → "+numero, (ruptures.length?"Envoyé malgré rupture de stock. ":"")+(choix.technicienResponsableNom||""));
         close();
         toast(moSansTech.length ? "OR "+numero+" créé — "+moSansTech.length+" ligne(s) de main d'œuvre sans technicien à ajouter manuellement." : "OR "+numero+" créé.");
         setView("atelier-detail", { id: orRef.id });
@@ -2340,7 +2443,7 @@ function openFactureDirecteForm(vehicules){
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Créer la facture</button>',
     async onMount(back, close){
       const [articles, techniciens] = await Promise.all([getAll("articles"), getAll("techniciens")]);
-      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens });
+      const editor = renderLinesEditor(back.querySelector("#linesBox"), items, articles, { techniciens, warnStock:true });
       const vehPicker = mountSearchableSelect(back.querySelector("#vehSlot"), {
         items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…"
       });
@@ -2350,6 +2453,11 @@ function openFactureDirecteForm(vehicules){
         if(!vehiculeId){ toast("Choisissez un véhicule.", "danger"); return; }
         const lignes = editor.getItems().map(l=>({...l, montant: computeLigneMontant(l)}));
         if(!lignes.length){ toast("Ajoutez au moins une ligne.", "danger"); return; }
+        const ruptures = calculerRuptures(lignes, articles);
+        if(ruptures.length){
+          const ok = await confirmerRuptureStock(ruptures);
+          if(!ok) return;
+        }
         const montantTotal = lignes.reduce((s,l)=>s+l.montant,0);
         const numero = await nextNumero("facture","FAC");
         const ref = await state.db.collection("factures").add({
@@ -2360,7 +2468,7 @@ function openFactureDirecteForm(vehicules){
         for(const l of lignes){
           if(l.type!=="main_oeuvre" && l.articleId) await ajusterStock(l.articleId, -Math.abs(l.quantite||0), "sortie", "facture", numero, "Vente directe");
         }
-        await logAudit("Création facture directe", numero, "");
+        await logAudit("Création facture directe", numero, ruptures.length?"Facturé malgré rupture de stock.":"");
         close(); toast("Facture "+numero+" créée."); setView("facture-detail",{id:ref.id});
       });
     }
@@ -3226,6 +3334,7 @@ const MANUEL_SECTIONS = [
     <p>Si un mécanicien est disponible immédiatement, les étapes 2 et 3 peuvent se faire en une fois (le formulaire d'assignation accepte de saisir le diagnostic tout de suite).</p>
     <p>Depuis la fiche d'un véhicule immobilisé, le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le constat, à compléter avec les références de pièces nécessaires.</p>
     <p><b>Import CSV :</b> le bouton "Importer CSV" propose un modèle avec les colonnes attendues (immatriculation, marque, modèle, groupe, type, contrat, chauffeur, téléphone, statut). Les en-têtes sont reconnus même avec des variantes d'accents ou de casse.</p>
+    <p><b>+ Nouveau véhicule</b> ouvre un formulaire volontairement différent de "Modifier" : juste l'identité du véhicule (immatriculation, marque, modèle, groupe, type, contrat, chauffeur) — un véhicule qui rejoint la flotte n'est pas forcément en panne, il est donc toujours créé "Actif", sans les champs de statut/immobilisation/sinistre qui n'ont de sens que pour un véhicule déjà existant.</p>
   `},
   { id:"stock", title:"Stock / Catalogue", html:`
     <p>Référentiel des pièces : référence, désignation, famille, prix d'achat et de vente, quantité en stock, seuil d'alerte, emplacement.</p>
@@ -3246,6 +3355,7 @@ const MANUEL_SECTIONS = [
     </ul>
     <p>Le montant de la main d'œuvre est toujours fixé librement ligne par ligne (jamais calculé automatiquement), avec assignation optionnelle à un technicien.</p>
     <p><b>Acompte :</b> tant qu'un devis n'est pas encore facturé, le bouton <b>+ Enregistrer un acompte</b> permet de noter un versement reçu à l'avance (montant, date, mode, référence) — plusieurs acomptes sont possibles. Le jour où le devis se convertit en facture (directement, ou via un OR clôturé), le total des acomptes devient automatiquement le premier règlement de la facture : le solde dû affiché tient compte de ce qui a déjà été payé, sans ressaisie.</p>
+    <p><b>Rupture de stock :</b> dans l'éditeur de lignes, une pièce dont la quantité demandée dépasse le stock disponible affiche un petit repère rouge "Rupture — dispo X" sous la quantité, en direct pendant la saisie. Au moment d'envoyer le devis à l'atelier, de le facturer directement, ou pour une vente comptoir, la même vérification bloque l'opération pour un agent ; un administrateur peut passer outre après confirmation explicite (cas où la pièce est réparable ou sourcée autrement) — ce contournement est tracé dans le <a href="#m-journal">journal</a>.</p>
     <p>Un administrateur peut <b>supprimer définitivement</b> un devis (utile pour nettoyer des essais) — action irréversible, à distinguer d'un devis simplement marqué "Refusé". Un devis déjà converti en facture ne peut plus être supprimé (le bouton disparaît) : la facture le référence, le supprimer casserait cette référence.</p>
   `},
   { id:"atelier", title:"Atelier (ordres de réparation)", html:`
