@@ -1345,18 +1345,20 @@ VIEWS.dashboard = async function(view){
       '<div>'+
         '<h3 class="section-title">Véhicules avec le plus d\'impayés</h3>'+
         '<div class="table-wrap"><table class="grid"><thead><tr><th>Immatriculation</th><th>Chauffeur</th><th class="num">Montant dû</th></tr></thead><tbody>'+
-          (topDebiteurs.length ? topDebiteurs.map(r=>
-            '<tr class="clickable" data-veh="'+r.vehicule.id+'"><td class="mono">'+esc(r.vehicule.immatriculation)+'</td><td>'+esc(r.vehicule.chauffeurNom||"—")+'</td><td class="num mono">'+fmtMoney(r.du)+"</td></tr>"
+          (topDebiteurs.length ? topDebiteurs.map((r,i)=>
+            '<tr class="clickable" data-veh="'+r.vehicule.id+'" '+(i>=5?'data-extra="debiteurs" hidden':"")+'><td class="mono">'+esc(r.vehicule.immatriculation)+'</td><td>'+esc(r.vehicule.chauffeurNom||"—")+'</td><td class="num mono">'+fmtMoney(r.du)+"</td></tr>"
           ).join("") : '<tr class="empty-row"><td colspan="3">Aucun impayé — la flotte est à jour.</td></tr>')+
         "</tbody></table></div>"+
+        (topDebiteurs.length>5 ? '<button class="btn small ghost" id="toggleDebiteurs">Afficher '+(topDebiteurs.length-5)+' de plus</button>' : "")+
       "</div>"+
       '<div>'+
         '<h3 class="section-title">Références sous seuil</h3>'+
         '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Stock</th></tr></thead><tbody>'+
-          (sousSeuil.length ? sousSeuil.slice(0,10).map(a=>
-            '<tr class="clickable" data-art="'+a.id+'"><td>'+esc(a.reference)+'<br><span class="faint">'+esc(a.designation)+'</span></td><td class="num mono">'+(a.stockQte||0)+' / '+(a.stockSeuil||0)+"</td></tr>"
+          (sousSeuil.length ? sousSeuil.map((a,i)=>
+            '<tr class="clickable" data-art="'+a.id+'" '+(i>=5?'data-extra="sousSeuil" hidden':"")+'><td>'+esc(a.reference)+'<br><span class="faint">'+esc(a.designation)+'</span></td><td class="num mono">'+(a.stockQte||0)+' / '+(a.stockSeuil||0)+"</td></tr>"
           ).join("") : '<tr class="empty-row"><td colspan="2">Aucune rupture prévisible.</td></tr>')+
         "</tbody></table></div>"+
+        (sousSeuil.length>5 ? '<button class="btn small ghost" id="toggleSousSeuil">Afficher '+(sousSeuil.length-5)+' de plus</button>' : "")+
       "</div>"+
     "</div>";
 
@@ -1366,6 +1368,18 @@ VIEWS.dashboard = async function(view){
   view.querySelectorAll("[data-art]").forEach(tr=>{
     tr.addEventListener("click", ()=> setView("stock", { filter:"sousSeuil" }));
   });
+  function wireToggle(btnId, groupKey, totalExtra){
+    const btn = view.querySelector("#"+btnId);
+    if(!btn) return;
+    btn.addEventListener("click", ()=>{
+      const rows = view.querySelectorAll('[data-extra="'+groupKey+'"]');
+      const nowHidden = !rows[0].hidden;
+      rows.forEach(tr=>tr.hidden = nowHidden);
+      btn.textContent = nowHidden ? "Afficher "+totalExtra+" de plus" : "Réduire";
+    });
+  }
+  wireToggle("toggleDebiteurs", "debiteurs", topDebiteurs.length-5);
+  wireToggle("toggleSousSeuil", "sousSeuil", sousSeuil.length-5);
   view.querySelectorAll("[data-goto]").forEach(el=>{
     el.addEventListener("click", ()=> setView(el.getAttribute("data-goto"), { filter: el.getAttribute("data-filter")||undefined }));
   });
