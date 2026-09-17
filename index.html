@@ -3386,6 +3386,8 @@ VIEWS.journal = async function(view){
 function totalRecuValideClient(clientId, virements){
   return virements.filter(v=>v.clientId===clientId && v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
 }
+const SEUIL_VALIDATION_MANUELLE = 0.9;
+
 function allouerDemandes(clientId, demandes, virements){
   const mesDemandes = demandes.filter(d=>d.clientId===clientId).slice().sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   const valides = virements.filter(v=>v.clientId===clientId && v.statut==="valide")
@@ -3396,16 +3398,23 @@ function allouerDemandes(clientId, demandes, virements){
     const cout = Number(d.cout)||0;
     seuilCum += cout;
     const recuAlloue = Math.max(0, Math.min(cout, totalRecu - (seuilCum - cout)));
-    const pret = cout>0 && totalRecu>=seuilCum;
+    const atteintNaturellement = cout>0 && totalRecu>=seuilCum;
+    /* Un admin peut faire basculer manuellement en "prêt" une demande dont
+       le montant alloué dépasse déjà SEUIL_VALIDATION_MANUELLE (90%), sans
+       attendre les derniers versements — basculerPretManuel(). */
+    const valideManuellement = !atteintNaturellement && !!d.valideManuellement;
+    const pret = atteintNaturellement || valideManuellement;
     let dateAtteint = null;
-    if(pret){
+    if(atteintNaturellement){
       let cum = 0;
       for(const v of valides){
         cum += Number(v.montantRecu)||0;
         if(cum >= seuilCum){ dateAtteint = v.dateVirement||v.createdAt; break; }
       }
+    } else if(valideManuellement){
+      dateAtteint = d.dateValidationManuelle || d.createdAt;
     }
-    return { demande: d, cout, recuAlloue, pret, dateAtteint };
+    return { demande: d, cout, recuAlloue, pret, dateAtteint, valideManuellement };
   });
 }
 function renderProgressBar(recu, cout){
@@ -3541,7 +3550,7 @@ VIEWS.clients = async function(view, params){
             '<td class="clickable" data-id="'+x.c.id+'">'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td>'+
             '<td>1/'+(x.demande.partDenominateur||1)+'</td>'+
             '<td class="num mono">'+fmtMoney(x.recuAlloue)+' / '+fmtMoney(x.cout)+'</td>'+
-            '<td>'+fmtDate(x.dateAtteint)+'</td>'+
+            '<td>'+fmtDate(x.dateAtteint)+(x.valideManuellement ? ' <span class="faint">(validé admin)</span>' : "")+'</td>'+
             '<td class="row-actions"><button class="btn small primary" data-attribuer="'+x.demande.id+'">Attribuer</button></td></tr>'
           ).join("")+
           "</tbody></table></div>";
@@ -3549,10 +3558,13 @@ VIEWS.clients = async function(view, params){
     }
 
     html += '<h3 class="section-title">En cours d\'accumulation ('+enCours.length+')</h3>'+
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Véhicule souhaité</th><th class="num">Progression</th></tr></thead><tbody>'+
-      (enCours.length ? enCours.map(x=>
-        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(libelleVehicule(x.demande))+'</td><td class="num">'+renderProgressBar(x.recuAlloue, x.cout)+'</td></tr>'
-      ).join("") : '<tr class="empty-row"><td colspan="3">Aucun client en cours.</td></tr>')+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Véhicule souhaité</th><th class="num">Progression</th><th></th></tr></thead><tbody>'+
+      (enCours.length ? enCours.map(x=>{
+        const pct = x.cout>0 ? x.recuAlloue/x.cout : 0;
+        const peutValider = isAdmin() && pct>=SEUIL_VALIDATION_MANUELLE;
+        return '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(libelleVehicule(x.demande))+'</td><td class="num">'+renderProgressBar(x.recuAlloue, x.cout)+'</td>'+
+          '<td class="row-actions">'+(peutValider ? '<button class="btn small primary" data-valider-manuel="'+x.demande.id+'">Marquer prêt à attribuer</button>' : "")+"</td></tr>";
+      }).join("") : '<tr class="empty-row"><td colspan="4">Aucun client en cours.</td></tr>')+
       "</tbody></table></div>";
 
     document.getElementById("tabBody").innerHTML = html;
@@ -3561,6 +3573,11 @@ VIEWS.clients = async function(view, params){
       e.stopPropagation();
       const item = prets.find(x=>x.demande.id===b.getAttribute("data-attribuer"));
       if(item) getAll("vehicules").then(vehicules=>openAttributionForm(item.c, item.demande, vehicules, item));
+    }));
+    document.querySelectorAll("#tabBody [data-valider-manuel]").forEach(b=>b.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const item = enCours.find(x=>x.demande.id===b.getAttribute("data-valider-manuel"));
+      if(item) basculerPretManuel(item, item.c, ()=>setView("clients",{filter:"attente"}));
     }));
   }
 
@@ -3806,9 +3823,10 @@ VIEWS["client-detail"] = async function(view, params){
       return "<tr>"+
         "<td>"+esc(libelleVehicule(d))+(vehiculeAttribue ? ' — <a href="#" class="mono" data-go-veh="'+vehiculeAttribue.id+'">'+esc(vehiculeAttribue.immatriculation)+"</a>" : "")+"</td>"+
         '<td class="num">'+renderProgressBar(a.recuAlloue, a.cout)+' <span class="faint mono">('+fmtMoney(a.recuAlloue)+" / "+fmtMoney(a.cout)+")</span></td>"+
-        "<td>"+pill(d.statut||"en_attente")+(a.pret && d.statut!=="attribue" ? ' <span class="faint">— prêt depuis '+fmtDate(a.dateAtteint)+"</span>" : "")+"</td>"+
+        "<td>"+pill(d.statut||"en_attente")+(a.pret && d.statut!=="attribue" ? ' <span class="faint">— prêt depuis '+fmtDate(a.dateAtteint)+(a.valideManuellement?" (validé admin)":"")+"</span>" : "")+"</td>"+
         '<td class="row-actions">'+
           (d.statut!=="attribue" ? '<button class="btn small primary" data-attribuer="'+d.id+'">Attribuer</button><button class="btn small ghost" data-edit-dem="'+d.id+'">Modifier</button>' : "")+
+          (d.statut!=="attribue" && !a.pret && isAdmin() && a.cout>0 && (a.recuAlloue/a.cout)>=SEUIL_VALIDATION_MANUELLE ? '<button class="btn small" data-valider-manuel="'+d.id+'">Marquer prêt à attribuer</button>' : "")+
           (isAdmin() ? '<button class="btn small danger" data-delete-dem="'+d.id+'">Supprimer</button>' : "")+
         "</td>"+
       "</tr>";
@@ -3823,6 +3841,10 @@ VIEWS["client-detail"] = async function(view, params){
       if(a) openDemandeForm(c, modeles, a.demande);
     }));
     view.querySelectorAll("[data-delete-dem]").forEach(b=>b.addEventListener("click", ()=>eliminerDemande(c, b.getAttribute("data-delete-dem"))));
+    view.querySelectorAll("[data-valider-manuel]").forEach(b=>b.addEventListener("click", ()=>{
+      const a = allocations.find(x=>x.demande.id===b.getAttribute("data-valider-manuel"));
+      if(a) basculerPretManuel(a, c, ()=>setView("client-detail",{id:c.id}));
+    }));
   }
   drawDemandes();
 
@@ -3937,6 +3959,22 @@ async function eliminerDemande(client, demandeId){
     await state.db.doc("demandes_vehicule/"+demandeId).delete();
     await logAudit("Suppression véhicule souhaité", client.nom, "");
     toast("Véhicule souhaité supprimé."); setView("client-detail",{id:client.id});
+  }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
+}
+
+/* Fait basculer manuellement une demande à plus de 90% du montant en "prêt
+   à attribuer", sans attendre les derniers versements — réservé aux
+   administrateurs, avec confirmation explicite. */
+async function basculerPretManuel(allocation, client, retourView){
+  if(!isAdmin()){ toast("Seul un administrateur peut valider ce basculement.", "danger"); return; }
+  const pct = allocation.cout>0 ? Math.round(allocation.recuAlloue/allocation.cout*100) : 0;
+  const ok = await askConfirm("Faire basculer \""+allocation.demande.modeleNom+"\" ("+client.nom+", "+pct+"% du montant) en \"prêt à attribuer\" sans attendre le solde ?", "Valider");
+  if(!ok) return;
+  try{
+    await state.db.doc("demandes_vehicule/"+allocation.demande.id).update({ valideManuellement:true, dateValidationManuelle: todayIso() });
+    await logAudit("Validation manuelle véhicule souhaité", client.nom, allocation.demande.modeleNom+" ("+pct+"%)");
+    toast("Véhicule souhaité marqué prêt à attribuer.");
+    if(retourView) retourView(); else setView("clients",{filter:"attente"});
   }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
 }
 
@@ -4329,7 +4367,8 @@ const MANUEL_SECTIONS = [
       <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En ajoutant un véhicule souhaité sur une fiche client, le choix se fait par menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement selon la part choisie et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant un véhicule souhaité déjà enregistré, s'il correspond à un modèle du catalogue, il est présélectionné automatiquement, et son coût déjà stocké n'est jamais recalculé silencieusement si le prix du catalogue a changé depuis.</li>
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
       <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte, ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
-      <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués.</li>
+      <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués. Chaque en-tête de groupe précise aussi le nombre de véhicules physiques réellement nécessaires compte tenu des parts (ex. 6 clients à 1/2 = 3 véhicules).</li>
+      <li><b>Validation manuelle à 90 %</b> — pour un véhicule souhaité "en cours d'accumulation" dont le montant alloué atteint déjà 90 % de son coût, un bouton "Marquer prêt à attribuer" (réservé aux administrateurs, avec confirmation) le fait basculer dans "Prêts à attribuer" sans attendre le solde. Il apparaît alors avec la mention "(validé admin)" pour rester distinct d'un montant réellement atteint à 100 %.</li>
       <li>L'onglet "Par véhicule souhaité" liste <b>tous</b> les véhicules souhaités (attribués ou non, montant atteint ou non), avec un menu déroulant pour filtrer par type et une recherche par nom de client — utile pour repérer qui pourrait partager un même véhicule. Le type affiché est toujours un modèle du catalogue ; un véhicule souhaité en "Autre / personnalisé…" (texte libre, budget non précisé…) apparaît sous "Non déterminé" plutôt que sous son texte brut.</li>
       <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), un premier véhicule souhaité est créé automatiquement avec le coût extrait.</li>
       <li><b>Import de virements</b> (bouton "Importer virements (CSV)") — pour ajouter en masse des virements déjà répertoriés ailleurs (colonnes telephone;montantEnvoye;montantRecu;statut;dateVirement;reference) ; chaque ligne est rattachée au client existant dont le téléphone correspond exactement, les lignes sans correspondance sont ignorées et listées.</li>
