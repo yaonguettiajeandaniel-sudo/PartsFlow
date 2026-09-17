@@ -3375,6 +3375,22 @@ function dateAtteinteClient(client, virements){
   }
   return null;
 }
+/* Nom "propre" du véhicule souhaité, pour l'affichage et le regroupement :
+   le texte brut enregistré sur le client (import CSV, saisie libre "Autre")
+   contient souvent un commentaire ("Kaiyi E5 à 16 412 €", "Budget en dessous
+   de 10 000 €") qui ferait éclater le classement par type en plusieurs
+   groupes pour un même modèle. On préfère le lien exact (vehiculeSouhaiteId),
+   sinon on détecte un nom du catalogue contenu dans le texte, sinon on garde
+   le texte brut tel quel (cas hors catalogue). */
+function vehiculeSouhaiteAffiche(client, modeles){
+  if(client.vehiculeSouhaiteId){
+    const m = modeles.find(x=>x.id===client.vehiculeSouhaiteId);
+    if(m) return m.nom;
+  }
+  const texte = (client.vehiculeSouhaite||"").toLowerCase();
+  const trouve = modeles.find(m=>texte.includes(m.nom.toLowerCase()));
+  return trouve ? trouve.nom : (client.vehiculeSouhaite || "Non précisé");
+}
 function renderProgressBar(recu, cout){
   const pct = cout>0 ? Math.min(100, Math.round(recu/cout*100)) : (recu>0 ? 100 : 0);
   const cls = pct>=100 ? "good" : (pct>=50 ? "amber" : "danger");
@@ -3404,7 +3420,7 @@ function stepsPourClient(client, mesVirements){
 }
 
 VIEWS.clients = async function(view, params){
-  const [clients, virements] = await Promise.all([getAll("clients"), getAll("virements")]);
+  const [clients, virements, modeles] = await Promise.all([getAll("clients"), getAll("virements"), getAll("modeles_vehicule")]);
   clients.sort((a,b)=> (a.nom||"").localeCompare(b.nom||""));
   const initialTab = (params && params.filter==="attente") ? "attente" : "tous";
 
@@ -3429,7 +3445,7 @@ VIEWS.clients = async function(view, params){
         return '<tr class="clickable" data-id="'+c.id+'">'+
           '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
           '<td>'+esc(c.telephone||"—")+'</td>'+
-          '<td>'+esc(c.vehiculeSouhaite||"—")+'</td>'+
+          '<td>'+esc(vehiculeSouhaiteAffiche(c, modeles))+'</td>'+
           '<td class="num">'+renderProgressBar(recu, Number(c.coutVehiculeSouhaite)||0)+'</td>'+
           '<td>'+pill(c.statutAttribution||"en_attente")+'</td>'+
         "</tr>";
@@ -3457,7 +3473,7 @@ VIEWS.clients = async function(view, params){
 
     const groupes = {};
     prets.forEach(x=>{
-      const key = x.c.vehiculeSouhaite || "Non précisé";
+      const key = vehiculeSouhaiteAffiche(x.c, modeles);
       (groupes[key] = groupes[key]||[]).push(x);
     });
 
@@ -3482,7 +3498,7 @@ VIEWS.clients = async function(view, params){
     html += '<h3 class="section-title">En cours d\'accumulation ('+enCours.length+')</h3>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Véhicule souhaité</th><th class="num">Progression</th></tr></thead><tbody>'+
       (enCours.length ? enCours.map(x=>
-        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(x.c.vehiculeSouhaite||"—")+'</td><td class="num">'+renderProgressBar(x.recu, x.cout)+'</td></tr>'
+        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(vehiculeSouhaiteAffiche(x.c, modeles))+'</td><td class="num">'+renderProgressBar(x.recu, x.cout)+'</td></tr>'
       ).join("") : '<tr class="empty-row"><td colspan="3">Aucun client en cours.</td></tr>')+
       "</tbody></table></div>";
 
@@ -3671,7 +3687,7 @@ function openModelesVehiculeManager(){
 VIEWS["client-detail"] = async function(view, params){
   const c = await getOne("clients", params.id);
   if(!c){ view.innerHTML = '<p class="faint">Client introuvable.</p>'; return; }
-  const [virements, vehicules] = await Promise.all([getAll("virements"), getAll("vehicules")]);
+  const [virements, vehicules, modeles] = await Promise.all([getAll("virements"), getAll("vehicules"), getAll("modeles_vehicule")]);
   const mesVirements = virements.filter(v=>v.clientId===c.id).sort((a,b)=>new Date(b.dateVirement||b.createdAt)-new Date(a.dateVirement||a.createdAt));
   const totalEnvoye = mesVirements.reduce((s,v)=>s+(Number(v.montantEnvoye)||0),0);
   const totalRecu = mesVirements.filter(v=>v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
@@ -3692,7 +3708,7 @@ VIEWS["client-detail"] = async function(view, params){
     "</div>"+
     '<div class="card">'+
       "<h3>Véhicule souhaité</h3>"+
-      '<p class="muted" style="margin-top:0;">'+esc(c.vehiculeSouhaite||"Non renseigné")+(c.offreActuelle?(" · Offre : "+esc(c.offreActuelle)):"")+(c.migrationSouhaitee?(" · Migration : "+esc(c.migrationSouhaitee)):"")+"</p>"+
+      '<p class="muted" style="margin-top:0;">'+esc(vehiculeSouhaiteAffiche(c, modeles))+(c.offreActuelle?(" · Offre : "+esc(c.offreActuelle)):"")+(c.migrationSouhaitee?(" · Migration : "+esc(c.migrationSouhaitee)):"")+"</p>"+
       (cout>0 ? '<p style="margin-bottom:10px;">Coût du véhicule : <b>'+fmtMoney(cout)+'</b> — '+renderProgressBar(totalRecu, cout)+"</p>" : "")+
       (vehiculeAttribue
         ? '<p style="margin-bottom:0;">Véhicule attribué : <a href="#" id="goVehicule" class="mono">'+esc(vehiculeAttribue.immatriculation)+"</a> ("+esc(vehiculeAttribue.marque)+" "+esc(vehiculeAttribue.modele)+")</p>"
