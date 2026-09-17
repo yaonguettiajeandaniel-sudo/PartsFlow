@@ -235,6 +235,20 @@
   .pill.en_attente{background:var(--amber-soft); color:var(--amber);}
   .pill.valide, .pill.attribue{background:var(--good-soft); color:var(--good);}
   .pill.rejete{background:var(--danger-soft); color:var(--danger);}
+  .stepper{display:flex; align-items:flex-start; margin:18px 0 22px; flex-wrap:wrap;}
+  .step{display:flex; flex-direction:column; align-items:center; gap:6px; flex:0 0 auto; width:110px;}
+  .step-dot{width:26px; height:26px; border-radius:50%; background:var(--faint-soft); color:var(--ink-muted); display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:700; border:2px solid var(--line);}
+  .step.done .step-dot{background:var(--good); color:#fff; border-color:var(--good);}
+  .step.current .step-dot{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .step-label{font-size:0.72rem; text-align:center; color:var(--ink-muted); max-width:100px;}
+  .step.done .step-label{color:var(--ink);}
+  .step-line{flex:1 1 auto; height:2px; background:var(--line); margin-top:13px; min-width:12px;}
+  .progress-bar{display:inline-block; width:70px; height:8px; background:var(--faint-soft); border-radius:4px; overflow:hidden; vertical-align:middle; margin-right:6px;}
+  .progress-fill{height:100%; background:var(--accent);}
+  .progress-fill.good{background:var(--good);}
+  .progress-fill.amber{background:var(--amber);}
+  .progress-fill.danger{background:var(--danger);}
+  .progress-label{font-size:0.75rem; color:var(--ink-muted); font-family:'IBM Plex Mono';}
 
   .badge-low{background:var(--danger-soft); color:var(--danger); padding:1px 7px; border-radius:100px; font-size:0.7rem; font-weight:700;}
 
@@ -982,22 +996,28 @@ const CSV_SPECS = {
   },
   clients: {
     title: "clients (suivi des virements)",
-    template: "nom;prenoms;telephone;email;pays;vehiculeSouhaite;offreActuelle;migrationSouhaitee\nKouadio;Awa;+225 0102030405;awa@example.com;Côte d'Ivoire;Kaiyi E5;Full Options (Argent);\n",
+    template: "nom;prenoms;telephone;email;pays;vehiculeSouhaite;coutVehiculeSouhaite;offreActuelle;migrationSouhaitee\nKouadio;Awa;+225 0102030405;awa@example.com;Côte d'Ivoire;Kaiyi E5;16412;Full Options (Argent);\n",
     filename: "modele-clients.csv",
     keyField: "telephone",
-    map: (r)=>({
-      nom: pickField(r, ["nom"]),
-      prenoms: pickField(r, ["prenoms","prénoms","prenom","prénom"]),
-      telephone: pickField(r, ["telephone","téléphone","tel","whatsapp","contact"]),
-      email: pickField(r, ["email","e-mail","mail"]),
-      pays: pickField(r, ["pays","paysderesidence"]),
-      vehiculeSouhaite: pickField(r, ["vehiculesouhaite","véhiculesouhaite","vehicule","véhicule"]),
-      offreActuelle: pickField(r, ["offreactuelle","offre"]),
-      migrationSouhaitee: pickField(r, ["migrationsouhaitee","migration"]),
-      statutAttribution: "en_attente",
-      vehiculeAttribueId: null,
-      createdAt: todayIso(),
-    }),
+    map: (r)=>{
+      const vehiculeSouhaite = pickField(r, ["vehiculesouhaite","véhiculesouhaite","vehicule","véhicule"]);
+      const coutSaisi = pickField(r, ["coutvehiculesouhaite","coutvehicule","cout","coût"]);
+      const coutExtrait = (vehiculeSouhaite.match(/(\d[\d\s]*)\s*€/)||[])[1];
+      return {
+        nom: pickField(r, ["nom"]),
+        prenoms: pickField(r, ["prenoms","prénoms","prenom","prénom"]),
+        telephone: pickField(r, ["telephone","téléphone","tel","whatsapp","contact"]),
+        email: pickField(r, ["email","e-mail","mail"]),
+        pays: pickField(r, ["pays","paysderesidence"]),
+        vehiculeSouhaite,
+        coutVehiculeSouhaite: Number(coutSaisi || (coutExtrait||"").replace(/\s/g,"")) || 0,
+        offreActuelle: pickField(r, ["offreactuelle","offre"]),
+        migrationSouhaitee: pickField(r, ["migrationsouhaitee","migration"]),
+        statutAttribution: "en_attente",
+        vehiculeAttribueId: null,
+        createdAt: todayIso(),
+      };
+    },
     valid: (row)=> !!row.nom && !!row.telephone,
   },
 };
@@ -1204,8 +1224,8 @@ function setView(name, params){
 // bloquant, orange pour "à surveiller, pas urgent". Le nombre lui-même vient
 // de refreshNavBadges(), recalculé à chaque changement d'onglet.
 const NAV_BADGE_COLOR = {
-  vehicules: "danger", triage: "danger", achats: "danger",
-  stock: "amber", atelier: "amber", factures: "amber", comptage: "amber", clients: "amber",
+  vehicules: "danger", triage: "danger", achats: "danger", clients: "danger",
+  stock: "amber", atelier: "amber", factures: "amber", comptage: "amber",
 };
 function renderNav(){
   const nav = document.getElementById("mainnav");
@@ -1236,8 +1256,9 @@ async function refreshNavBadges(){
       atelier: ordres.filter(o=>o.statut==="ouvert" && !o.technicienResponsableId).length,
       factures: factures.filter(f=>f.statutPaiement==="impayee").length,
       comptage: comptages.filter(c=>c.statut && c.statut!=="valide").length,
-      clients: virements.filter(v=>v.statut==="en_attente").length,
     };
+    const clients = await getAll("clients");
+    state.navBadges.clients = clients.filter(c=>(c.statutAttribution||"en_attente")!=="attribue" && dateAtteinteClient(c, virements)).length;
     // Bloqué (rupture de stock) réutilise la même logique que l'onglet Triage —
     // ne recalcule que le nombre, sans dupliquer toute la simulation de réservation.
     const vehiculesEnReparation = new Set(ordres.filter(o=>o.statut==="ouvert").map(o=>o.vehiculeId));
@@ -3333,13 +3354,58 @@ VIEWS.journal = async function(view){
    envoi des justificatifs (virement enregistré) → confirmation de réception
    des fonds (validé/en attente/rejeté) → attribution d'un véhicule (existant
    ou nouvellement créé, qui rejoint alors la flotte "Véhicules"). */
+/* ---- Suivi de progression client (fonds reçus vs coût du véhicule voulu) -
+   Le coût sur la fiche client est celui du véhicule/type de véhicule qu'il
+   souhaite (pas celui d'une unité précise de la flotte) : ça permet de savoir
+   si ses virements validés couvrent déjà ce qu'il doit, avant d'attribuer. */
+function totalRecuValideClient(clientId, virements){
+  return virements.filter(v=>v.clientId===clientId && v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
+}
+function dateAtteinteClient(client, virements){
+  const cout = Number(client.coutVehiculeSouhaite)||0;
+  if(cout<=0) return null;
+  const valides = virements.filter(v=>v.clientId===client.id && v.statut==="valide")
+    .slice().sort((a,b)=>new Date(a.dateVirement||a.createdAt)-new Date(b.dateVirement||b.createdAt));
+  let cum = 0;
+  for(const v of valides){
+    cum += Number(v.montantRecu)||0;
+    if(cum >= cout) return v.dateVirement||v.createdAt;
+  }
+  return null;
+}
+function renderProgressBar(recu, cout){
+  const pct = cout>0 ? Math.min(100, Math.round(recu/cout*100)) : (recu>0 ? 100 : 0);
+  const cls = pct>=100 ? "good" : (pct>=50 ? "amber" : "danger");
+  return '<div class="progress-bar"><div class="progress-fill '+cls+'" style="width:'+pct+'%;"></div></div><span class="progress-label">'+pct+"%</span>";
+}
+function renderStepper(steps){
+  return '<div class="stepper">'+steps.map((s,i)=>
+    '<div class="step '+(s.done?"done":(s.current?"current":""))+'">'+
+      '<div class="step-dot">'+(s.done?"&check;":(i+1))+'</div>'+
+      '<div class="step-label">'+esc(s.label)+'</div>'+
+    '</div>'
+  ).join('<div class="step-line"></div>')+'</div>';
+}
+function stepsPourClient(client, mesVirements){
+  const totalRecu = mesVirements.filter(v=>v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
+  const cout = Number(client.coutVehiculeSouhaite)||0;
+  const envoye = mesVirements.length>0;
+  const confirme = totalRecu>0;
+  const atteint = cout>0 && totalRecu>=cout;
+  const attribue = (client.statutAttribution||"en_attente")==="attribue";
+  const s1 = { label:"Justificatif envoyé", done: envoye };
+  const s2 = { label:"Fonds confirmés", done: confirme };
+  const s3 = { label: cout>0 ? "Montant atteint" : "Montant à atteindre (non défini)", done: atteint };
+  const s4 = { label:"Véhicule attribué", done: attribue };
+  [s1,s2,s3,s4].forEach((s,i,arr)=>{ if(!s.done && !arr.slice(0,i).some(x=>!x.done)) s.current = true; });
+  return [s1,s2,s3,s4];
+}
+
 VIEWS.clients = async function(view, params){
   const [clients, virements] = await Promise.all([getAll("clients"), getAll("virements")]);
   clients.sort((a,b)=> (a.nom||"").localeCompare(b.nom||""));
   const initialTab = (params && params.filter==="attente") ? "attente" : "tous";
-  function soldeRecu(clientId){
-    return virements.filter(v=>v.clientId===clientId && v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
-  }
+
   view.innerHTML =
     '<div class="tabs">'+
       '<button '+(initialTab==="tous"?'class="active"':'')+' data-tab="tous">Tous ('+clients.length+')</button>'+
@@ -3347,38 +3413,92 @@ VIEWS.clients = async function(view, params){
     '</div>'+
     '<div id="tabBody"></div>';
 
-  function drawList(filterAttente){
-    const rows0 = filterAttente ? clients.filter(c=>(c.statutAttribution||"en_attente")!=="attribue") : clients;
+  function drawTous(){
     document.getElementById("tabBody").innerHTML =
       '<div class="view-head"><div><p class="lede">Clients suivis via les virements JET_S — envoi des justificatifs, confirmation de réception des fonds, puis attribution d\'un véhicule.</p></div>'+
-        '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
+        '<div class="row-actions"><button class="btn" id="importVirements">Importer virements (CSV)</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
       '<div class="toolbar"><input type="search" id="cliSearch" placeholder="Rechercher par nom, téléphone, véhicule souhaité…"></div>'+
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th><th>Véhicule souhaité</th><th class="num">Reçu (validé)</th><th>Statut</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th><th>Véhicule souhaité</th><th class="num">Progression</th><th>Statut</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
     function draw(filter){
       const f = (filter||"").toLowerCase();
-      const rows = rows0.filter(c=>!f || [c.nom,c.prenoms,c.telephone,c.vehiculeSouhaite].some(x=>(x||"").toLowerCase().includes(f)));
-      document.getElementById("cliTbody").innerHTML = rows.length ? rows.map(c=>
-        '<tr class="clickable" data-id="'+c.id+'">'+
+      const rows = clients.filter(c=>!f || [c.nom,c.prenoms,c.telephone,c.vehiculeSouhaite].some(x=>(x||"").toLowerCase().includes(f)));
+      document.getElementById("cliTbody").innerHTML = rows.length ? rows.map(c=>{
+        const recu = totalRecuValideClient(c.id, virements);
+        return '<tr class="clickable" data-id="'+c.id+'">'+
           '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
           '<td>'+esc(c.telephone||"—")+'</td>'+
           '<td>'+esc(c.vehiculeSouhaite||"—")+'</td>'+
-          '<td class="num mono">'+fmtMoney(soldeRecu(c.id))+'</td>'+
+          '<td class="num">'+renderProgressBar(recu, Number(c.coutVehiculeSouhaite)||0)+'</td>'+
           '<td>'+pill(c.statutAttribution||"en_attente")+'</td>'+
-        "</tr>"
-      ).join("") : '<tr class="empty-row"><td colspan="5">Aucun client ne correspond.</td></tr>';
+        "</tr>";
+      }).join("") : '<tr class="empty-row"><td colspan="5">Aucun client ne correspond.</td></tr>';
       document.querySelectorAll("#cliTbody [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("client-detail",{id:tr.getAttribute("data-id")})));
     }
     draw("");
     document.getElementById("cliSearch").addEventListener("input", e=>draw(e.target.value));
     document.getElementById("newClient").addEventListener("click", ()=>openClientForm());
     document.getElementById("importCsv").addEventListener("click", ()=>openCsvImport("clients"));
+    document.getElementById("importVirements").addEventListener("click", ()=>openImporterVirements());
   }
-  drawList(initialTab==="attente");
+
+  function drawAttente(){
+    const nonAttribues = clients.filter(c=>(c.statutAttribution||"en_attente")!=="attribue").map(c=>{
+      const mesV = virements.filter(v=>v.clientId===c.id);
+      const recu = totalRecuValideClient(c.id, virements);
+      const cout = Number(c.coutVehiculeSouhaite)||0;
+      const dateAtteint = dateAtteinteClient(c, virements);
+      return { c, recu, cout, pret: !!dateAtteint, dateAtteint };
+    });
+    const prets = nonAttribues.filter(x=>x.pret).sort((a,b)=>new Date(a.dateAtteint)-new Date(b.dateAtteint));
+    const enCours = nonAttribues.filter(x=>!x.pret).sort((a,b)=>(a.c.nom||"").localeCompare(b.c.nom||""));
+
+    const groupes = {};
+    prets.forEach(x=>{
+      const key = x.c.vehiculeSouhaite || "Non précisé";
+      (groupes[key] = groupes[key]||[]).push(x);
+    });
+
+    let html = '<div class="view-head"><div><p class="lede">Clients pas encore attribués. "Prêts à attribuer" regroupe ceux dont les fonds validés couvrent déjà le coût du véhicule souhaité, classés par type de véhicule puis par ordre d\'atteinte du montant (le premier arrivé, premier servi).</p></div></div>';
+
+    if(prets.length){
+      html += '<h3 class="section-title">Prêts à attribuer ('+prets.length+')</h3>';
+      Object.entries(groupes).forEach(([type, list])=>{
+        html += '<p class="faint" style="margin:14px 0 4px;font-weight:600;">'+esc(type)+' — '+list.length+' client(s)</p>'+
+          '<div class="table-wrap"><table class="grid"><thead><tr><th>Rang</th><th>Client</th><th class="num">Reçu / Coût</th><th>Prêt depuis</th><th></th></tr></thead><tbody>'+
+          list.map((x,i)=>
+            '<tr><td class="mono">'+(i+1)+'</td>'+
+            '<td class="clickable" data-id="'+x.c.id+'">'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td>'+
+            '<td class="num mono">'+fmtMoney(x.recu)+' / '+fmtMoney(x.cout)+'</td>'+
+            '<td>'+fmtDate(x.dateAtteint)+'</td>'+
+            '<td class="row-actions"><button class="btn small primary" data-attribuer="'+x.c.id+'">Attribuer</button></td></tr>'
+          ).join("")+
+          "</tbody></table></div>";
+      });
+    }
+
+    html += '<h3 class="section-title">En cours d\'accumulation ('+enCours.length+')</h3>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Véhicule souhaité</th><th class="num">Progression</th></tr></thead><tbody>'+
+      (enCours.length ? enCours.map(x=>
+        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(x.c.vehiculeSouhaite||"—")+'</td><td class="num">'+renderProgressBar(x.recu, x.cout)+'</td></tr>'
+      ).join("") : '<tr class="empty-row"><td colspan="3">Aucun client en cours.</td></tr>')+
+      "</tbody></table></div>";
+
+    document.getElementById("tabBody").innerHTML = html;
+    document.querySelectorAll("#tabBody [data-id]").forEach(el=>el.addEventListener("click", ()=>setView("client-detail",{id:el.getAttribute("data-id")})));
+    document.querySelectorAll("#tabBody [data-attribuer]").forEach(b=>b.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const item = prets.find(x=>x.c.id===b.getAttribute("data-attribuer"));
+      if(item) getAll("vehicules").then(vehicules=>openAttributionForm(item.c, vehicules, virements));
+    }));
+  }
+
+  function drawList(tab){ tab==="attente" ? drawAttente() : drawTous(); }
+  drawList(initialTab);
   view.querySelectorAll(".tabs button").forEach(b=>{
     b.addEventListener("click", ()=>{
       view.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      drawList(b.getAttribute("data-tab")==="attente");
+      drawList(b.getAttribute("data-tab"));
     });
   });
 };
@@ -3394,9 +3514,10 @@ function openClientForm(existing){
       '<div class="field"><label>Téléphone</label><input id="f_tel" value="'+esc(c.telephone||"")+'"></div>'+
       '<div class="field"><label>Email</label><input id="f_email" value="'+esc(c.email||"")+'"></div>'+
     "</div>"+
-    '<div class="field-row" style="grid-template-columns:1fr 2fr;">'+
+    '<div class="field-row" style="grid-template-columns:1fr 2fr 1fr;">'+
       '<div class="field"><label>Pays</label><input id="f_pays" value="'+esc(c.pays||"")+'"></div>'+
-      '<div class="field"><label>Véhicule souhaité</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
+      '<div class="field"><label>Véhicule souhaité (type)</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
+      '<div class="field"><label>Coût du véhicule (F CFA)</label><input id="f_cout" type="number" value="'+esc(c.coutVehiculeSouhaite||"")+'"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
       '<div class="field"><label>Offre actuelle</label><input id="f_offre" value="'+esc(c.offreActuelle||"")+'"></div>'+
@@ -3417,6 +3538,7 @@ function openClientForm(existing){
           email: back.querySelector("#f_email").value.trim(), pays: back.querySelector("#f_pays").value.trim(),
           vehiculeSouhaite: back.querySelector("#f_veh").value.trim(), offreActuelle: back.querySelector("#f_offre").value.trim(),
           migrationSouhaitee: back.querySelector("#f_migration").value.trim(), notes: back.querySelector("#f_notes").value.trim(),
+          coutVehiculeSouhaite: Number(back.querySelector("#f_cout").value)||0,
         };
         if(existing){
           await state.db.doc("clients/"+existing.id).update(data);
@@ -3441,11 +3563,14 @@ VIEWS["client-detail"] = async function(view, params){
   const totalRecu = mesVirements.filter(v=>v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
   const vehiculeAttribue = c.vehiculeAttribueId ? vehicules.find(v=>v.id===c.vehiculeAttribueId) : null;
 
+  const cout = Number(c.coutVehiculeSouhaite)||0;
+
   view.innerHTML =
     '<button class="back-link" id="back">&larr; Retour aux clients</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(c.nom)+' '+esc(c.prenoms||"")+'</h2>'+
       '<p class="lede">'+esc(c.telephone||"—")+(c.email?" · "+esc(c.email):"")+(c.pays?" · "+esc(c.pays):"")+'</p></div>'+
-      '<div class="row-actions">'+pill(c.statutAttribution||"en_attente")+'<button class="btn" id="editClient">Modifier</button></div></div>'+
+      '<div class="row-actions">'+pill(c.statutAttribution||"en_attente")+'<button class="btn" id="editClient">Modifier</button>'+(isAdmin()?'<button class="btn danger" id="deleteClient">Supprimer</button>':"")+'</div></div>'+
+    renderStepper(stepsPourClient(c, mesVirements))+
     '<div class="kpi-grid">'+
       '<div class="kpi"><div class="lbl">Total envoyé</div><div class="val">'+fmtMoney(totalEnvoye)+'</div></div>'+
       '<div class="kpi"><div class="lbl">Total reçu (validé)</div><div class="val">'+fmtMoney(totalRecu)+'</div></div>'+
@@ -3454,6 +3579,7 @@ VIEWS["client-detail"] = async function(view, params){
     '<div class="card">'+
       "<h3>Véhicule souhaité</h3>"+
       '<p class="muted" style="margin-top:0;">'+esc(c.vehiculeSouhaite||"Non renseigné")+(c.offreActuelle?(" · Offre : "+esc(c.offreActuelle)):"")+(c.migrationSouhaitee?(" · Migration : "+esc(c.migrationSouhaitee)):"")+"</p>"+
+      (cout>0 ? '<p style="margin-bottom:10px;">Coût du véhicule : <b>'+fmtMoney(cout)+'</b> — '+renderProgressBar(totalRecu, cout)+"</p>" : "")+
       (vehiculeAttribue
         ? '<p style="margin-bottom:0;">Véhicule attribué : <a href="#" id="goVehicule" class="mono">'+esc(vehiculeAttribue.immatriculation)+"</a> ("+esc(vehiculeAttribue.marque)+" "+esc(vehiculeAttribue.modele)+")</p>"
         : '<button class="btn primary" id="attribuer">Attribuer un véhicule</button>')+
@@ -3495,10 +3621,23 @@ VIEWS["client-detail"] = async function(view, params){
   view.querySelector("#editClient").addEventListener("click", ()=>openClientForm(c));
   view.querySelector("#newVirement").addEventListener("click", ()=>openVirementForm(c));
   const attribBtn = view.querySelector("#attribuer");
-  if(attribBtn) attribBtn.addEventListener("click", ()=>openAttributionForm(c, vehicules));
+  if(attribBtn) attribBtn.addEventListener("click", ()=>openAttributionForm(c, vehicules, virements));
   const goVeh = view.querySelector("#goVehicule");
   if(goVeh) goVeh.addEventListener("click", (e)=>{ e.preventDefault(); setView("vehicule-detail",{id:vehiculeAttribue.id}); });
+  const deleteBtn = view.querySelector("#deleteClient");
+  if(deleteBtn) deleteBtn.addEventListener("click", ()=>eliminerClient(c));
 };
+
+async function eliminerClient(client){
+  const ok = await askConfirm("Supprimer définitivement "+client.nom+" "+(client.prenoms||"")+" et tous ses virements ? Cette action est irréversible.", "Supprimer");
+  if(!ok) return;
+  try{
+    await state.db.doc("clients/"+client.id).delete();
+    await logAudit("Suppression client", client.nom, "");
+    toast("Client supprimé.");
+    setView("clients");
+  }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
+}
 
 function openVirementForm(client, existing){
   const v = existing || {};
@@ -3544,7 +3683,98 @@ function openVirementForm(client, existing){
   });
 }
 
-function openAttributionForm(client, vehicules){
+/* Import de virements déjà extraits (ex. dépouillement de captures d'écran) :
+   contrairement à CSV_SPECS (autonome par table), chaque ligne doit être
+   rattachée à un client existant — le rattachement se fait par téléphone
+   (identifiant fiable, contrairement au nom en texte libre) au moment de
+   l'import, pas à la génération du fichier. */
+function openImporterVirements(){
+  const body =
+    '<p class="muted" style="margin-top:0;">Importe des virements déjà répertoriés (colonnes : telephone;montantEnvoye;montantRecu;statut;dateVirement;reference). Chaque ligne est rattachée au client existant dont le téléphone correspond exactement ; les lignes sans correspondance sont ignorées et listées ci-dessous.</p>'+
+    '<div class="dropzone" id="dz"><input type="file" id="csvFile" accept=".csv,text/csv" style="margin-bottom:8px;"><br><span class="faint">ou collez le contenu CSV ci-dessous</span><textarea id="csvPaste" rows="4" style="margin-top:8px;"></textarea></div>'+
+    '<div id="previewBox"></div>';
+  const { close } = openModal("Importer des virements", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Fermer</button><button class="btn primary" id="doImport" disabled>Confirmer l\'import</button>',
+    async onMount(back, close){
+      const clients = await getAll("clients");
+      const byTel = {};
+      clients.forEach(c=>{ const k=String(c.telephone||"").replace(/\D/g,""); if(k) byTel[k]=c; });
+      let matched = [], unmatched = [];
+      back.querySelector("#cancel").addEventListener("click", close);
+      function handleText(text){
+        const parsed = parseCSV(text);
+        matched = []; unmatched = [];
+        parsed.records.forEach(r=>{
+          const telRaw = pickField(r, ["telephone","téléphone","tel"]);
+          const tel = String(telRaw||"").replace(/\D/g,"");
+          const client = byTel[tel];
+          const statutBrut = pickField(r,["statut"]).toLowerCase();
+          const row = {
+            montantEnvoye: Number(pickField(r,["montantenvoye","envoye"]))||0,
+            montantRecu: Number(pickField(r,["montantrecu","recu"]))||0,
+            statut: ["valide","en_attente","rejete"].includes(statutBrut) ? statutBrut : "en_attente",
+            dateVirement: pickField(r,["datevirement","date"])||null,
+            reference: pickField(r,["reference","référence","ref"]),
+          };
+          if(client){ row.clientId = client.id; row.clientNom = client.nom+" "+(client.prenoms||""); matched.push(row); }
+          else { row.telephone = telRaw; unmatched.push(row); }
+        });
+        back.querySelector("#previewBox").innerHTML =
+          '<div class="import-summary"><div><b>'+parsed.records.length+'</b><span class="faint">lignes lues</span></div><div><b>'+matched.length+'</b><span class="faint">rattachées à un client</span></div>'+(unmatched.length?'<div><b style="color:var(--danger);">'+unmatched.length+'</b><span class="faint">sans client correspondant</span></div>':'')+'</div>'+
+          (matched.length ? '<div class="table-wrap" style="box-shadow:none;"><table class="grid"><thead><tr><th>Client</th><th class="num">Envoyé</th><th class="num">Reçu</th><th>Statut</th><th>Date</th></tr></thead><tbody>'+
+            matched.slice(0,8).map(r=>"<tr><td>"+esc(r.clientNom)+'</td><td class="num mono">'+fmtMoney(r.montantEnvoye)+'</td><td class="num mono">'+fmtMoney(r.montantRecu)+"</td><td>"+pill(r.statut)+"</td><td>"+esc(r.dateVirement||"—")+"</td></tr>").join("")+
+          "</tbody></table></div>"+(matched.length>8?'<p class="faint">… et '+(matched.length-8)+' de plus.</p>':"") : '<p class="faint">Aucune ligne rattachée à un client.</p>')+
+          (unmatched.length ? '<p class="faint" style="color:var(--danger);">Téléphones sans client : '+unmatched.slice(0,15).map(r=>esc(r.telephone||"—")).join(", ")+(unmatched.length>15?"…":"")+"</p>" : "");
+        back.querySelector("#doImport").disabled = !matched.length;
+      }
+      back.querySelector("#csvFile").addEventListener("change",(e)=>{
+        const file=e.target.files[0]; if(!file) return;
+        const reader=new FileReader();
+        reader.onload=()=>handleText(String(reader.result||""));
+        reader.readAsText(file,"utf-8");
+      });
+      back.querySelector("#csvPaste").addEventListener("input",(e)=>handleText(e.target.value));
+      back.querySelector("#doImport").addEventListener("click", async ()=>{
+        if(!matched.length) return;
+        const btn = back.querySelector("#doImport"); btn.disabled = true;
+        for(let i=0;i<matched.length;i++){
+          const r = matched[i];
+          await state.db.collection("virements").add({
+            clientId: r.clientId, montantEnvoye: r.montantEnvoye, montantRecu: r.montantRecu,
+            statut: r.statut, dateVirement: r.dateVirement, reference: r.reference, notes:"",
+            createdAt: todayIso(),
+          });
+          btn.textContent = "Import… "+(i+1)+"/"+matched.length;
+        }
+        await logAudit("Import CSV", "virements", matched.length+" créés, "+unmatched.length+" ignorés (sans client)");
+        close();
+        toast(matched.length+" virement(s) importé(s)"+(unmatched.length?", "+unmatched.length+" ignoré(s) (téléphone non reconnu)":"")+".");
+        renderView();
+      });
+    }
+  });
+}
+
+/* Le coût comparé ici est celui du véhicule SOUHAITÉ par le client (fiche
+   client), pas celui d'une unité précise de la flotte — un client doit avoir
+   couvert ce qu'il doit avant qu'on lui attribue quoi que ce soit, sauf
+   validation explicite d'un administrateur (même principe que la rupture de
+   stock côté atelier : ça bloque par défaut, un admin peut passer outre). */
+async function verifierMontantAttribution(client, virements){
+  const cout = Number(client.coutVehiculeSouhaite)||0;
+  if(cout<=0) return true;
+  const recu = totalRecuValideClient(client.id, virements||[]);
+  if(recu>=cout) return true;
+  if(!isAdmin()){
+    toast("Le montant reçu ("+fmtMoney(recu)+") ne couvre pas le coût du véhicule souhaité ("+fmtMoney(cout)+"). Un administrateur doit valider cette attribution.", "danger");
+    return false;
+  }
+  return await askConfirm("Le montant reçu ("+fmtMoney(recu)+") est inférieur au coût du véhicule souhaité ("+fmtMoney(cout)+"). Attribuer quand même ce véhicule ?", "Attribuer quand même");
+}
+
+function openAttributionForm(client, vehicules, virements){
+  virements = virements || [];
   const body =
     '<p class="muted" style="margin-top:0;">Choisissez un véhicule déjà enregistré dans la flotte, ou créez-en un nouveau pour ce client.</p>'+
     '<div class="field"><label>Véhicule existant</label><div id="vehPick"></div></div>'+
@@ -3566,11 +3796,13 @@ function openAttributionForm(client, vehicules){
       });
       back.querySelector("#save").addEventListener("click", async ()=>{
         if(!selectedId) return;
+        if(!(await verifierMontantAttribution(client, virements))) return;
         await state.db.doc("clients/"+client.id).update({ statutAttribution:"attribue", vehiculeAttribueId: selectedId, dateAttribution: todayIso() });
         await logAudit("Attribution véhicule", client.nom, (dispo.find(x=>x.id===selectedId)||{}).immatriculation||"");
         close(); toast("Véhicule attribué."); setView("client-detail",{id:client.id});
       });
-      back.querySelector("#creerVehicule").addEventListener("click", ()=>{
+      back.querySelector("#creerVehicule").addEventListener("click", async ()=>{
+        if(!(await verifierMontantAttribution(client, virements))) return;
         close();
         openNouveauVehiculeForm({
           prefill: { chauffeurNom: (client.nom+" "+(client.prenoms||"")).trim(), chauffeurTelephone: client.telephone },
@@ -3766,11 +3998,13 @@ const MANUEL_SECTIONS = [
   { id:"clients", title:"Clients", html:`
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution d'un véhicule :</p>
     <ul>
-      <li><b>Fiche client</b> — coordonnées, véhicule souhaité, offre actuelle et migration souhaitée (si le client change d'avis en cours de route, il suffit de modifier ces champs).</li>
-      <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
-      <li><b>Attribution du véhicule</b> — une fois les fonds confirmés, "Attribuer un véhicule" permet de choisir un véhicule déjà dans la flotte (non attribué à un autre client), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>.</li>
-      <li><b>Import CSV</b> — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Le modèle de fichier est téléchargeable depuis le bouton "Importer CSV" ; les doublons sont repérés par numéro de téléphone.</li>
-      <li>L'onglet "En attente d'attribution" liste les clients dont le véhicule n'est pas encore attribué. Une pastille orange sur l'icône du menu compte les virements en attente de validation.</li>
+      <li><b>Fiche client</b> — coordonnées, véhicule souhaité (type) et son coût, offre actuelle et migration souhaitée (si le client change d'avis en cours de route, il suffit de modifier ces champs). Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant atteint → véhicule attribué) montre en un coup d'œil où en est le dossier.</li>
+      <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client. Une jauge de progression (reçu / coût du véhicule souhaité) est visible sur la fiche et dans les listes.</li>
+      <li><b>Attribution du véhicule</b> — "Attribuer un véhicule" permet de choisir un véhicule déjà dans la flotte (non attribué à un autre client), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si le montant reçu (validé) n'atteint pas encore le coût renseigné sur la fiche, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
+      <li>L'onglet "En attente d'attribution" sépare les clients <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule souhaité puis par ordre d'atteinte du montant (premier arrivé, premier servi), des clients encore <b>en cours d'accumulation</b>. Une pastille rouge sur l'icône du menu compte les clients prêts mais pas encore attribués.</li>
+      <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), le coût est extrait automatiquement.</li>
+      <li><b>Import de virements</b> (bouton "Importer virements (CSV)") — pour ajouter en masse des virements déjà répertoriés ailleurs (colonnes telephone;montantEnvoye;montantRecu;statut;dateVirement;reference) ; chaque ligne est rattachée au client existant dont le téléphone correspond exactement, les lignes sans correspondance sont ignorées et listées.</li>
+      <li><b>Suppression</b> — le bouton "Supprimer" sur la fiche client (réservé aux administrateurs) supprime définitivement le client et tous ses virements.</li>
     </ul>
     <p>Comme les autres onglets, l'accès "Clients" s'accorde ou se retire par agent depuis Paramètres.</p>
   `},

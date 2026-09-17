@@ -4,7 +4,7 @@ Application interne de gestion d'atelier pour la flotte VTC de l'utilisateur (ca
 
 ## Conventions de ce projet
 
-- Toute modification du schéma passe par un nouveau fichier `migration-N.sql` (N croissant — le dernier est `migration-11.sql`) contenant uniquement le SQL du changement. On donne son contenu à l'utilisateur pour qu'il l'exécute lui-même dans Supabase (SQL Editor) — jamais exécuté par Claude directement (pas d'accès à la base depuis cette machine).
+- Toute modification du schéma passe par un nouveau fichier `migration-N.sql` (N croissant — le dernier est `migration-12.sql`) contenant uniquement le SQL du changement. On donne son contenu à l'utilisateur pour qu'il l'exécute lui-même dans Supabase (SQL Editor) — jamais exécuté par Claude directement (pas d'accès à la base depuis cette machine).
 - `git push` est toujours fait par l'utilisateur dans son propre terminal, jamais par Claude.
 - Après toute modification de `index.html`, valider la syntaxe JS avant de committer (pas de Node sur cette machine — utiliser `osascript -l JavaScript` avec `new Function(source)` sur le contenu du tag `<script>`, voir l'historique de conversation pour le pattern exact).
 - Ne jamais mettre la clé `service_role` Supabase dans le code ; seule la clé publique (`sb_publishable_...`) est dans `index.html`.
@@ -14,9 +14,12 @@ Application interne de gestion d'atelier pour la flotte VTC de l'utilisateur (ca
 
 Second flux d'activité de l'utilisateur (vente/financement de véhicules à des clients par virement, distinct de l'atelier), initialement suivi via une appli tierce (captures d'écran "Détail du virement") et un Google Sheet séparé (formulaire d'intake : véhicule souhaité, offre, migration d'offre). Une première analyse ponctuelle (176 virements croisés avec ~150 clients du Sheet) a été livrée dans un doc Claude : https://claude.ai/code/artifact/3b61379a-c3fd-47a8-96ea-87b0e8540529.
 
-**Intégré dans PartsFlow** (migration-11.sql, tables `clients` et `virements`) comme un onglet "Clients" normal (assignable par agent, comme les autres — pas réservé aux admins). Décisions retenues :
-- Import en masse des ~150 clients existants via CSV (`CSV_SPECS.clients`, dédoublonnage par téléphone) plutôt qu'une ressaisie manuelle.
+**Intégré dans PartsFlow** (migration-11.sql puis migration-12.sql, tables `clients` et `virements`) comme un onglet "Clients" normal (assignable par agent, comme les autres — pas réservé aux admins). Décisions retenues :
+- Import en masse des clients existants via CSV (`CSV_SPECS.clients`, dédoublonnage par téléphone ; le coût est extrait automatiquement du texte "véhicule souhaité" s'il contient un prix en €) plutôt qu'une ressaisie manuelle.
 - L'attribution d'un véhicule à un client crée un véhicule réel et lié dans la flotte `vehicules` (ou réutilise un véhicule existant non déjà attribué) — pas une entité séparée.
-- Processus suivi sur la fiche client : virements (envoi des justificatifs → En attente/Validé/Rejeté) puis attribution du véhicule une fois les fonds confirmés.
+- Processus suivi sur la fiche client, avec une barre d'étapes (justificatif envoyé → fonds confirmés → montant atteint → véhicule attribué) : virements (En attente/Validé/Rejeté), puis attribution une fois les fonds confirmés.
+- Le coût du véhicule souhaité (`clients.cout_vehicule_souhaite`) est comparé au total des virements validés avant d'autoriser une attribution : si le montant n'est pas atteint, un agent est bloqué, un administrateur doit confirmer explicitement (`verifierMontantAttribution` dans `index.html`, même principe que la rupture de stock côté atelier).
+- Les virements déjà répertoriés ailleurs (ex. dépouillement des captures d'écran JET_S) s'importent en masse via un import dédié (`openImporterVirements`, bouton "Importer virements (CSV)") qui rattache chaque ligne à un client par téléphone — distinct du système `CSV_SPECS` générique car il doit résoudre une relation vers une autre table.
+- Suppression définitive d'un client (et de ses virements, via `on delete cascade`) possible depuis sa fiche, réservée aux administrateurs.
 
-Reste à faire si besoin : préparer un fichier CSV prêt à importer à partir du Google Sheet actuel (pas encore régénéré depuis l'intégration du module).
+Les 176 captures du dossier `VIREMENTS JET_S` ont été ré-analysées une seconde fois (transaction par transaction, pas seulement des totaux agrégés) pour produire un fichier `import-virements.csv` prêt à importer, rattaché par téléphone aux clients déjà connus du Google Sheet.
