@@ -3456,6 +3456,13 @@ function typeVehiculeCatalogue(demande, modeles){
   const m = demande.modeleId ? modeles.find(x=>x.id===demande.modeleId) : null;
   return m ? m.nom : "Non déterminé";
 }
+/* Nombre de véhicules physiques réellement nécessaires pour un groupe de
+   clients, en tenant compte des parts (1/2, 1/3…) — ex. 6 clients à 1/2
+   chacun ne correspondent qu'à 3 véhicules à commander, pas 6. */
+function sommeVehiculesEquivalents(list){
+  const total = list.reduce((s,x)=>s+1/((x.demande.partDenominateur)||1), 0);
+  return Math.round(total*100)/100;
+}
 
 VIEWS.clients = async function(view, params){
   const [clients, virements, demandes, modeles] = await Promise.all([getAll("clients"), getAll("virements"), getAll("demandes_vehicule"), getAll("modeles_vehicule")]);
@@ -3525,7 +3532,9 @@ VIEWS.clients = async function(view, params){
     if(prets.length){
       html += '<h3 class="section-title">Prêts à attribuer ('+prets.length+')</h3>';
       Object.entries(groupes).forEach(([type, list])=>{
-        html += '<p class="faint" style="margin:14px 0 4px;font-weight:600;">'+esc(type)+' — '+list.length+' client(s)</p>'+
+        const nbVehicules = sommeVehiculesEquivalents(list);
+        html += '<p class="faint" style="margin:14px 0 4px;font-weight:600;">'+esc(type)+' — '+list.length+' client(s)'+
+          (nbVehicules!==list.length ? ", soit "+nbVehicules+" véhicule(s) (parts comprises)" : "")+"</p>"+
           '<div class="table-wrap"><table class="grid"><thead><tr><th>Rang</th><th>Client</th><th>Part</th><th class="num">Reçu / Coût</th><th>Prêt depuis</th><th></th></tr></thead><tbody>'+
           list.map((x,i)=>
             '<tr><td class="mono">'+(i+1)+'</td>'+
@@ -3573,6 +3582,7 @@ VIEWS.clients = async function(view, params){
         "</select>"+
         '<input type="search" id="typeSearch" placeholder="Rechercher un client…" style="flex:1;min-width:200px;">'+
       "</div>"+
+      '<p class="faint" id="typeSummary" style="margin:10px 0;"></p>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Type de véhicule</th><th>Part</th><th class="num">Alloué / Coût</th><th>Statut</th></tr></thead><tbody id="typesTbody"></tbody></table></div>';
 
     function draw(){
@@ -3580,6 +3590,8 @@ VIEWS.clients = async function(view, params){
       const f = document.getElementById("typeSearch").value.toLowerCase();
       const rows = items.filter(x=>(!typeSel || x.type===typeSel) && (!f || (x.c.nom+" "+(x.c.prenoms||"")).toLowerCase().includes(f)))
         .sort((a,b)=> a.type.localeCompare(b.type) || (a.c.nom||"").localeCompare(b.c.nom||""));
+      const nbVehicules = sommeVehiculesEquivalents(rows);
+      document.getElementById("typeSummary").textContent = rows.length+" client(s)"+(nbVehicules!==rows.length ? ", soit "+nbVehicules+" véhicule(s) (parts comprises)" : "");
       document.getElementById("typesTbody").innerHTML = rows.length ? rows.map(x=>
         '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td>'+
         '<td>'+esc(x.type)+'</td>'+
