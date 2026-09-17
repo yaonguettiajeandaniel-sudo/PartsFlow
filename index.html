@@ -972,6 +972,7 @@ const CSV_SPECS = {
       stockQte: Number(pickField(r, ["stockqte","stock","quantite","quantité"]))||0,
       stockSeuil: Number(pickField(r, ["stockseuil","seuil","seuilalerte"]))||0,
       emplacement: pickField(r, ["emplacement","empl","localisation"]),
+      echangeStandard: ["oui","vrai","true","1"].includes(pickField(r, ["echangestandard","echange"]).toLowerCase()),
       createdAt: todayIso(),
     }),
     valid: (row)=> !!row.reference,
@@ -2016,6 +2017,7 @@ function openArticleForm(existing, fournisseurs){
       '<div class="field"><label>Seuil de réappro.</label><input id="f_seuil" type="number" value="'+esc(a.stockSeuil||0)+'"></div>'+
       '<div class="field"><label>Emplacement</label><input id="f_emp" value="'+esc(a.emplacement||"")+'"></div>'+
     "</div>"+
+    '<label class="checkbox-row"><input type="checkbox" id="f_echange" '+(a.echangeStandard?"checked":"")+'> Pièce à échange standard (l\'ancienne pièce doit être restituée avant de clôturer un OR)</label>'+
     (existing && !isAdmin() ? '<div class="callout amber"><span class="lbl">Info</span><p>Seul un administrateur peut modifier un prix existant.</p></div>' : "");
 
   const { close } = openModal(existing?"Modifier l'article":"Nouvel article", body, {
@@ -2042,6 +2044,7 @@ function openArticleForm(existing, fournisseurs){
           tva: Number(back.querySelector("#f_tva").value)||0,
           stockSeuil: Number(back.querySelector("#f_seuil").value)||0,
           emplacement: back.querySelector("#f_emp").value.trim(),
+          echangeStandard: back.querySelector("#f_echange").checked,
         };
         if(existing){
           await state.db.doc("articles/"+existing.id).update(data);
@@ -2824,8 +2827,12 @@ VIEWS["atelier-detail"] = async function(view, params){
     '<div class="detail-grid">'+
       '<div>'+
         '<h3 class="section-title">Pièces posées</h3>'+
-        '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Qté</th><th class="num">P.U.</th><th class="num">Montant</th></tr></thead><tbody>'+
-          ((o.pieces||[]).length ? o.pieces.map(p=>'<tr><td>'+esc(p.reference)+" — "+esc(p.designation)+'</td><td class="num mono">'+p.quantite+'</td><td class="num mono">'+fmtMoney(p.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(p.quantite*p.prixUnitaire)+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="4">Aucune pièce posée.</td></tr>')+
+        '<div class="table-wrap"><table class="grid"><thead><tr><th>Référence</th><th class="num">Qté</th><th class="num">P.U.</th><th class="num">Montant</th><th>Échange standard</th></tr></thead><tbody>'+
+          ((o.pieces||[]).length ? o.pieces.map((p,i)=>'<tr><td>'+esc(p.reference)+" — "+esc(p.designation)+'</td><td class="num mono">'+p.quantite+'</td><td class="num mono">'+fmtMoney(p.prixUnitaire)+'</td><td class="num mono">'+fmtMoney(p.quantite*p.prixUnitaire)+"</td><td>"+
+            (!p.echangeStandard ? '<span class="faint">—</span>' :
+              p.ancienneRecue ? '<span class="pill attribue">Ancienne reçue</span>' :
+              (o.statut==="ouvert" ? '<button class="btn small" data-confirm-ancienne="'+i+'">Confirmer réception</button>' : '<span class="pill en_attente">Non restituée</span>')
+            )+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="5">Aucune pièce posée.</td></tr>')+
         "</tbody></table></div>"+
         (o.statut==="ouvert" ? '<button class="btn small" id="addPiece">+ Ajouter une pièce (sort du stock immédiatement)</button>' : "")+
         '<h3 class="section-title">Main d\'œuvre</h3>'+
@@ -2848,6 +2855,14 @@ VIEWS["atelier-detail"] = async function(view, params){
 
   const addPieceBtn = view.querySelector("#addPiece");
   if(addPieceBtn) addPieceBtn.addEventListener("click", async ()=>openAddPieceToOr(o));
+  view.querySelectorAll("[data-confirm-ancienne]").forEach(b=>b.addEventListener("click", async ()=>{
+    const idx = Number(b.getAttribute("data-confirm-ancienne"));
+    const pieces = (o.pieces||[]).slice();
+    pieces[idx] = { ...pieces[idx], ancienneRecue:true };
+    await state.db.doc("ordres/"+o.id).update({ pieces });
+    await logAudit("Confirmation ancienne pièce", o.numero, pieces[idx].reference);
+    toast("Ancienne pièce confirmée reçue."); setView("atelier-detail",{id:o.id});
+  }));
   const addIntervBtn = view.querySelector("#addInterv");
   if(addIntervBtn) addIntervBtn.addEventListener("click", ()=>openAddInterventionToOr(o, techniciens));
   const reassignBtn = view.querySelector("#reassignTech");
@@ -2855,6 +2870,21 @@ VIEWS["atelier-detail"] = async function(view, params){
   const closeBtn = view.querySelector("#closeOr");
   if(closeBtn) closeBtn.addEventListener("click", async ()=>{
     if(!(o.pieces||[]).length && !(o.interventions||[]).length){ toast("Ajoutez au moins une pièce ou une intervention avant de clôturer.", "danger"); return; }
+    /* Contrôle anti-vol : pour une pièce à échange standard, l'ancienne doit
+       être restituée avant clôture — bloquant par défaut, un admin peut
+       passer outre avec confirmation explicite et trace dans le journal
+       (même principe que la rupture de stock ou le montant insuffisant). */
+    const piecesManquantes = (o.pieces||[]).filter(p=>p.echangeStandard && !p.ancienneRecue);
+    if(piecesManquantes.length){
+      const liste = piecesManquantes.map(p=>p.reference).join(", ");
+      if(!isAdmin()){
+        toast("Ancienne pièce non restituée pour : "+liste+". Un administrateur doit valider la clôture sans restitution.", "danger");
+        return;
+      }
+      const okDeroger = await askConfirm("Ancienne pièce non restituée pour : "+liste+". Clôturer quand même, sans restitution ?", "Clôturer sans restitution");
+      if(!okDeroger) return;
+      await logAudit("Clôture OR sans restitution ancienne pièce", o.numero, liste);
+    }
     const ok = await askConfirm("Clôturer l'OR "+o.numero+" et générer la facture du véhicule ?", "Clôturer & facturer");
     if(!ok) return;
     const lignes = [
@@ -2930,7 +2960,7 @@ async function openAddPieceToOr(o){
         const prixUnitaire = Number(back.querySelector("#f_pu").value)||0;
         if(quantite<=0){ toast("Quantité invalide.", "danger"); return; }
         if(quantite > (art.stockQte||0)){ toast("Stock insuffisant ("+(art.stockQte||0)+" disponible).", "danger"); return; }
-        const pieces = [...(o.pieces||[]), { articleId, reference:art.reference, designation:art.designation, quantite, prixUnitaire }];
+        const pieces = [...(o.pieces||[]), { articleId, reference:art.reference, designation:art.designation, quantite, prixUnitaire, echangeStandard: !!art.echangeStandard, ancienneRecue:false }];
         await state.db.doc("ordres/"+o.id).update({ pieces });
         await ajusterStock(articleId, -quantite, "sortie", "or", o.numero, "Pose sur "+o.numero);
         close(); toast("Pièce ajoutée à l'OR."); setView("atelier-detail",{id:o.id});
@@ -4297,6 +4327,7 @@ const MANUEL_SECTIONS = [
   { id:"stock", title:"Stock / Catalogue", html:`
     <p>Référentiel des pièces : référence, désignation, famille, prix d'achat et de vente, quantité en stock, seuil d'alerte, emplacement.</p>
     <p>Une référence sous son seuil est mise en évidence et remonte dans les alertes du tableau de bord. Le stock est modifié automatiquement par trois mécanismes seulement : la réception d'une commande fournisseur, la sortie de pièces sur un devis/OR/facture, et la validation d'un comptage — jamais en modifiant la quantité à la main sur la fiche article, pour garder une traçabilité complète des mouvements.</p>
+    <p><b>Pièce à échange standard</b> — une case à cocher sur la fiche d'un article (batteries, alternateurs, compresseurs…) signale que l'ancienne pièce doit être physiquement restituée avant de pouvoir clôturer l'OR sur lequel elle a été posée. Voir <a href="#m-atelier">Atelier</a> pour le contrôle correspondant.</p>
     <p><b>Import CSV</b> disponible pour charger un catalogue existant.</p>
   `},
   { id:"achats", title:"Achats (fournisseurs et commandes)", html:`
@@ -4322,6 +4353,7 @@ const MANUEL_SECTIONS = [
       <li>Ajouter des pièces — sorties du stock au moment de l'ajout, pas à la clôture.</li>
       <li>Ajouter des interventions de main d'œuvre — description libre, montant fixé librement, technicien assigné (qui peut être différent du responsable si plusieurs personnes travaillent sur le même véhicule).</li>
     </ul>
+    <p><b>Contrôle anti-vol — échange standard :</b> quand une pièce marquée "échange standard" (voir <a href="#m-stock">Catalogue</a>) est ajoutée à un OR, un bouton "Confirmer réception" apparaît sur sa ligne tant que l'ancienne pièce n'a pas été notée comme restituée. La clôture de l'OR est bloquée pour un agent tant qu'il reste une pièce échange standard non confirmée — un administrateur peut clôturer quand même après confirmation explicite, ce contournement étant tracé dans le <a href="#m-journal">journal</a> (même principe que la rupture de stock côté devis).</p>
     <p>À la clôture de l'OR, la facture correspondante est générée automatiquement avec l'ensemble des pièces et interventions, et le véhicule repasse automatiquement "Actif" (voir <a href="#m-vehicules">Véhicules</a>).</p>
     <p>Le nombre d'OR ouverts en même temps est comparé à la <b>capacité de l'atelier</b> (réglable dans Paramètres) pour alimenter les recommandations de l'onglet <a href="#m-triage">Prise en charge</a>.</p>
   `},
