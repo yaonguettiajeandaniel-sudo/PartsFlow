@@ -103,6 +103,7 @@
     font-size:0.9rem; padding:7px 9px; border:1px solid var(--line-strong); border-radius:var(--radius);
     background:var(--surface); color:var(--ink); width:100%;
   }
+  input[readonly]{background:var(--faint-soft); color:var(--ink-muted);}
   label{display:block; font-size:0.72rem; letter-spacing:0.05em; text-transform:uppercase; color:var(--ink-muted); margin-bottom:4px;}
   .field{margin-bottom:14px;}
   .field-row{display:grid; gap:12px;}
@@ -3516,10 +3517,12 @@ function openClientForm(existing){
       '<div class="field"><label>Téléphone</label><input id="f_tel" value="'+esc(c.telephone||"")+'"></div>'+
       '<div class="field"><label>Email</label><input id="f_email" value="'+esc(c.email||"")+'"></div>'+
     "</div>"+
-    '<div class="field"><label>Modèle du catalogue (préremplit le type et le coût ci-dessous)</label><div id="f_modele"></div></div>'+
-    '<div class="field-row" style="grid-template-columns:1fr 2fr 1fr;">'+
+    '<div class="field-row" style="grid-template-columns:1fr 2fr;">'+
       '<div class="field"><label>Pays</label><input id="f_pays" value="'+esc(c.pays||"")+'"></div>'+
-      '<div class="field"><label>Véhicule souhaité (type)</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
+      '<div class="field"><label>Véhicule souhaité</label><div id="f_veh_pick"></div></div>'+
+    "</div>"+
+    '<div class="field-row" id="f_veh_custom_row" style="grid-template-columns:2fr 1fr;">'+
+      '<div class="field"><label>Type (personnalisé)</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
       '<div class="field"><label>Coût du véhicule (F CFA)</label><input id="f_cout" type="number" value="'+esc(c.coutVehiculeSouhaite||"")+'"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
@@ -3532,17 +3535,38 @@ function openClientForm(existing){
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
     async onMount(back, close){
       back.querySelector("#cancel").addEventListener("click", close);
+      const AUTRE_ID = "__autre__";
       const modeles = await getAll("modeles_vehicule");
+      modeles.sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
+      const items = modeles.concat([{ id: AUTRE_ID, nom:"Autre / personnalisé…", cout:null }]);
+
       let vehiculeSouhaiteId = c.vehiculeSouhaiteId || null;
-      mountSearchableSelect(back.querySelector("#f_modele"), {
-        items: modeles, getId: m=>m.id, getLabel: m=>m.nom+" ("+fmtMoney(m.cout)+")",
-        value: vehiculeSouhaiteId, placeholder: "Choisir un modèle enregistré…",
-        onChange: (id)=>{
-          vehiculeSouhaiteId = id;
-          const m = modeles.find(x=>x.id===id);
-          if(m){ back.querySelector("#f_veh").value = m.nom; back.querySelector("#f_cout").value = m.cout; }
+      if(!vehiculeSouhaiteId && c.vehiculeSouhaite){
+        const texte = c.vehiculeSouhaite.toLowerCase();
+        const trouve = modeles.find(m=> texte.includes(m.nom.toLowerCase()));
+        vehiculeSouhaiteId = trouve ? trouve.id : AUTRE_ID;
+      }
+
+      const customRow = back.querySelector("#f_veh_custom_row");
+      function syncCustomRow(){
+        const isAutre = !vehiculeSouhaiteId || vehiculeSouhaiteId===AUTRE_ID;
+        customRow.style.display = isAutre ? "" : "none";
+        const f_veh = back.querySelector("#f_veh"), f_cout = back.querySelector("#f_cout");
+        if(isAutre){
+          f_veh.readOnly = false; f_cout.readOnly = false;
+        } else {
+          const m = modeles.find(x=>x.id===vehiculeSouhaiteId);
+          f_veh.value = m.nom; f_cout.value = m.cout;
+          f_veh.readOnly = true; f_cout.readOnly = true;
         }
+      }
+      mountSearchableSelect(back.querySelector("#f_veh_pick"), {
+        items, getId: x=>x.id, getLabel: x=> x.id===AUTRE_ID ? x.nom : x.nom+" ("+fmtMoney(x.cout)+")",
+        value: vehiculeSouhaiteId, placeholder: "Choisir un véhicule…",
+        onChange: (id)=>{ vehiculeSouhaiteId = id; syncCustomRow(); }
       });
+      syncCustomRow();
+
       back.querySelector("#save").addEventListener("click", async ()=>{
         const nom = back.querySelector("#f_nom").value.trim();
         const telephone = back.querySelector("#f_tel").value.trim();
@@ -3553,7 +3577,7 @@ function openClientForm(existing){
           vehiculeSouhaite: back.querySelector("#f_veh").value.trim(), offreActuelle: back.querySelector("#f_offre").value.trim(),
           migrationSouhaitee: back.querySelector("#f_migration").value.trim(), notes: back.querySelector("#f_notes").value.trim(),
           coutVehiculeSouhaite: Number(back.querySelector("#f_cout").value)||0,
-          vehiculeSouhaiteId,
+          vehiculeSouhaiteId: (vehiculeSouhaiteId===AUTRE_ID ? null : vehiculeSouhaiteId),
         };
         if(existing){
           await state.db.doc("clients/"+existing.id).update(data);
@@ -4089,7 +4113,7 @@ const MANUEL_SECTIONS = [
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution d'un véhicule :</p>
     <ul>
       <li><b>Fiche client</b> — coordonnées, véhicule souhaité (type) et son coût, offre actuelle et migration souhaitée (si le client change d'avis en cours de route, il suffit de modifier ces champs). Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant atteint → véhicule attribué) montre en un coup d'œil où en est le dossier.</li>
-      <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En choisissant un modèle du catalogue sur la fiche client, le type et le coût se préremplissent automatiquement ; ils restent modifiables ensuite au cas par cas.</li>
+      <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). Sur la fiche client, "Véhicule souhaité" est un menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant une fiche client déjà existante, si son véhicule actuel correspond à un modèle du catalogue, il est présélectionné automatiquement.</li>
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client. Une jauge de progression (reçu / coût du véhicule souhaité) est visible sur la fiche et dans les listes.</li>
       <li><b>Attribution du véhicule</b> — "Attribuer un véhicule" permet de choisir un véhicule déjà dans la flotte (non attribué à un autre client), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si le montant reçu (validé) n'atteint pas encore le coût renseigné sur la fiche, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
       <li>L'onglet "En attente d'attribution" sépare les clients <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule souhaité puis par ordre d'atteinte du montant (premier arrivé, premier servi), des clients encore <b>en cours d'accumulation</b>. Une pastille rouge sur l'icône du menu compte les clients prêts mais pas encore attribués.</li>
