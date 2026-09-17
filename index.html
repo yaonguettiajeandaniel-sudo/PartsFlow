@@ -3444,16 +3444,21 @@ function statutAttributionClient(demandesClient){
   return { cls:"en_attente", label:"En attente" };
 }
 
+function libelleVehicule(demande){
+  return demande.modeleNom + ((demande.partDenominateur||1)>1 ? " (1/"+demande.partDenominateur+")" : "");
+}
+
 VIEWS.clients = async function(view, params){
   const [clients, virements, demandes] = await Promise.all([getAll("clients"), getAll("virements"), getAll("demandes_vehicule")]);
   clients.sort((a,b)=> (a.nom||"").localeCompare(b.nom||""));
-  const initialTab = (params && params.filter==="attente") ? "attente" : "tous";
+  const initialTab = (params && ["attente","types"].includes(params.filter)) ? params.filter : "tous";
   const nonAttribuesCount = clients.filter(c=>demandes.some(d=>d.clientId===c.id && d.statut!=="attribue")).length;
 
   view.innerHTML =
     '<div class="tabs">'+
       '<button '+(initialTab==="tous"?'class="active"':'')+' data-tab="tous">Tous ('+clients.length+')</button>'+
       '<button '+(initialTab==="attente"?'class="active"':'')+' data-tab="attente">En attente d\'attribution ('+nonAttribuesCount+')</button>'+
+      '<button '+(initialTab==="types"?'class="active"':'')+' data-tab="types">Par véhicule souhaité ('+demandes.length+')</button>'+
     '</div>'+
     '<div id="tabBody"></div>';
 
@@ -3470,7 +3475,7 @@ VIEWS.clients = async function(view, params){
         const demandesClient = demandes.filter(d=>d.clientId===c.id);
         const recu = totalRecuValideClient(c.id, virements);
         const coutTotal = demandesClient.reduce((s,d)=>s+(Number(d.cout)||0),0);
-        const noms = demandesClient.map(d=>d.modeleNom).join(", ");
+        const noms = demandesClient.map(libelleVehicule).join(", ");
         const st = statutAttributionClient(demandesClient);
         return '<tr class="clickable" data-id="'+c.id+'">'+
           '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
@@ -3512,10 +3517,11 @@ VIEWS.clients = async function(view, params){
       html += '<h3 class="section-title">Prêts à attribuer ('+prets.length+')</h3>';
       Object.entries(groupes).forEach(([type, list])=>{
         html += '<p class="faint" style="margin:14px 0 4px;font-weight:600;">'+esc(type)+' — '+list.length+' client(s)</p>'+
-          '<div class="table-wrap"><table class="grid"><thead><tr><th>Rang</th><th>Client</th><th class="num">Reçu / Coût</th><th>Prêt depuis</th><th></th></tr></thead><tbody>'+
+          '<div class="table-wrap"><table class="grid"><thead><tr><th>Rang</th><th>Client</th><th>Part</th><th class="num">Reçu / Coût</th><th>Prêt depuis</th><th></th></tr></thead><tbody>'+
           list.map((x,i)=>
             '<tr><td class="mono">'+(i+1)+'</td>'+
             '<td class="clickable" data-id="'+x.c.id+'">'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td>'+
+            '<td>1/'+(x.demande.partDenominateur||1)+'</td>'+
             '<td class="num mono">'+fmtMoney(x.recuAlloue)+' / '+fmtMoney(x.cout)+'</td>'+
             '<td>'+fmtDate(x.dateAtteint)+'</td>'+
             '<td class="row-actions"><button class="btn small primary" data-attribuer="'+x.demande.id+'">Attribuer</button></td></tr>'
@@ -3527,7 +3533,7 @@ VIEWS.clients = async function(view, params){
     html += '<h3 class="section-title">En cours d\'accumulation ('+enCours.length+')</h3>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Véhicule souhaité</th><th class="num">Progression</th></tr></thead><tbody>'+
       (enCours.length ? enCours.map(x=>
-        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(x.demande.modeleNom||"—")+'</td><td class="num">'+renderProgressBar(x.recuAlloue, x.cout)+'</td></tr>'
+        '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td><td>'+esc(libelleVehicule(x.demande))+'</td><td class="num">'+renderProgressBar(x.recuAlloue, x.cout)+'</td></tr>'
       ).join("") : '<tr class="empty-row"><td colspan="3">Aucun client en cours.</td></tr>')+
       "</tbody></table></div>";
 
@@ -3540,7 +3546,40 @@ VIEWS.clients = async function(view, params){
     }));
   }
 
-  function drawList(tab){ tab==="attente" ? drawAttente() : drawTous(); }
+  function drawTypes(){
+    const items = [];
+    clients.forEach(c=>{
+      allouerDemandes(c.id, demandes, virements).forEach(a=>{ items.push({ c, ...a }); });
+    });
+    const groupes = {};
+    items.forEach(x=>{
+      const key = x.demande.modeleNom || "Non précisé";
+      (groupes[key] = groupes[key]||[]).push(x);
+    });
+
+    let html = '<div class="view-head"><div><p class="lede">Tous les véhicules souhaités, groupés par type — utile pour repérer les clients qui pourraient partager un même véhicule (parts 1/2, 1/3…).</p></div></div>';
+
+    if(!items.length){
+      html += '<p class="faint">Aucun véhicule souhaité enregistré.</p>';
+    } else {
+      Object.entries(groupes).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([type, list])=>{
+        list.sort((a,b)=>(a.c.nom||"").localeCompare(b.c.nom||""));
+        html += '<h3 class="section-title">'+esc(type)+' — '+list.length+' client(s)</h3>'+
+          '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Part</th><th class="num">Alloué / Coût</th><th>Statut</th></tr></thead><tbody>'+
+          list.map(x=>
+            '<tr class="clickable" data-id="'+x.c.id+'"><td>'+esc(x.c.nom)+' '+esc(x.c.prenoms||"")+'</td>'+
+            '<td>1/'+(x.demande.partDenominateur||1)+'</td>'+
+            '<td class="num mono">'+fmtMoney(x.recuAlloue)+' / '+fmtMoney(x.cout)+'</td>'+
+            '<td>'+pill(x.demande.statut||"en_attente")+'</td></tr>'
+          ).join("")+
+          "</tbody></table></div>";
+      });
+    }
+    document.getElementById("tabBody").innerHTML = html;
+    document.querySelectorAll("#tabBody [data-id]").forEach(el=>el.addEventListener("click", ()=>setView("client-detail",{id:el.getAttribute("data-id")})));
+  }
+
+  function drawList(tab){ tab==="attente" ? drawAttente() : (tab==="types" ? drawTypes() : drawTous()); }
   drawList(initialTab);
   view.querySelectorAll(".tabs button").forEach(b=>{
     b.addEventListener("click", ()=>{
@@ -3557,7 +3596,12 @@ VIEWS.clients = async function(view, params){
    fromUserChange=false (affichage initial) garde tel quel ce qui est déjà
    enregistré, même si le catalogue a changé de prix depuis ; =true (menu
    changé par l'utilisateur) applique le prix catalogue courant. */
-function mountVehiculePicker(pickEl, customRowEl, vehInputEl, coutInputEl, modeles, initial){
+/* partSelectEl : <select> des parts (1, 2, 3 = véhicule entier, moitié,
+   tiers) — quand un modèle du catalogue est choisi, le coût de CETTE part
+   est le prix catalogue divisé par le dénominateur, recalculé à chaque
+   changement de véhicule ou de part (mais jamais à l'ouverture du
+   formulaire, cf. sync(false) dans openClientForm/openDemandeForm). */
+function mountVehiculePicker(pickEl, customRowEl, vehInputEl, coutInputEl, partSelectEl, modeles, initial){
   const AUTRE_ID = "__autre__";
   const items = modeles.concat([{ id: AUTRE_ID, nom:"Autre / personnalisé…", cout:null }]);
   let selectedId = initial.modeleId || null;
@@ -3566,6 +3610,7 @@ function mountVehiculePicker(pickEl, customRowEl, vehInputEl, coutInputEl, model
     const trouve = modeles.find(m=> texte.includes(m.nom.toLowerCase()));
     selectedId = trouve ? trouve.id : AUTRE_ID;
   }
+  function part(){ return Number(partSelectEl.value)||1; }
   function sync(fromUserChange){
     const isAutre = !selectedId || selectedId===AUTRE_ID;
     customRowEl.style.display = isAutre ? "" : "none";
@@ -3574,8 +3619,8 @@ function mountVehiculePicker(pickEl, customRowEl, vehInputEl, coutInputEl, model
     } else {
       const m = modeles.find(x=>x.id===selectedId);
       vehInputEl.readOnly = true; coutInputEl.readOnly = true;
-      if(fromUserChange){ vehInputEl.value = m.nom; coutInputEl.value = m.cout; }
-      else { vehInputEl.value = initial.nom || m.nom; coutInputEl.value = initial.cout || m.cout; }
+      if(fromUserChange){ vehInputEl.value = m.nom; coutInputEl.value = Math.round(m.cout/part()); }
+      else { vehInputEl.value = initial.nom || m.nom; coutInputEl.value = initial.cout || Math.round(m.cout/part()); }
     }
   }
   mountSearchableSelect(pickEl, {
@@ -3583,6 +3628,7 @@ function mountVehiculePicker(pickEl, customRowEl, vehInputEl, coutInputEl, model
     value: selectedId, placeholder: "Choisir un véhicule…",
     onChange: (id)=>{ selectedId = id; sync(true); }
   });
+  partSelectEl.addEventListener("change", ()=> sync(true));
   sync(false);
   return { getSelectedId: ()=> (selectedId===AUTRE_ID ? null : selectedId) };
 }
@@ -3731,7 +3777,7 @@ VIEWS["client-detail"] = async function(view, params){
       const d = a.demande;
       const vehiculeAttribue = d.vehiculeAttribueId ? vehicules.find(v=>v.id===d.vehiculeAttribueId) : null;
       return "<tr>"+
-        "<td>"+esc(d.modeleNom)+(vehiculeAttribue ? ' — <a href="#" class="mono" data-go-veh="'+vehiculeAttribue.id+'">'+esc(vehiculeAttribue.immatriculation)+"</a>" : "")+"</td>"+
+        "<td>"+esc(libelleVehicule(d))+(vehiculeAttribue ? ' — <a href="#" class="mono" data-go-veh="'+vehiculeAttribue.id+'">'+esc(vehiculeAttribue.immatriculation)+"</a>" : "")+"</td>"+
         '<td class="num">'+renderProgressBar(a.recuAlloue, a.cout)+' <span class="faint mono">('+fmtMoney(a.recuAlloue)+" / "+fmtMoney(a.cout)+")</span></td>"+
         "<td>"+pill(d.statut||"en_attente")+(a.pret && d.statut!=="attribue" ? ' <span class="faint">— prêt depuis '+fmtDate(a.dateAtteint)+"</span>" : "")+"</td>"+
         '<td class="row-actions">'+
@@ -3813,12 +3859,19 @@ async function eliminerClient(client){
 
 function openDemandeForm(client, modeles, existing){
   const d = existing || {};
+  const part = d.partDenominateur || 1;
   const body =
-    '<div class="field"><label>Véhicule souhaité</label><div id="f_veh_pick"></div></div>'+
+    '<div class="field-row" style="grid-template-columns:2fr 1fr;">'+
+      '<div class="field"><label>Véhicule souhaité</label><div id="f_veh_pick"></div></div>'+
+      '<div class="field"><label>Part</label><select id="f_part">'+
+        [1,2,3].map(p=>'<option value="'+p+'" '+(part===p?"selected":"")+'>'+(p===1?"Véhicule entier":"1/"+p+" (partagé)")+"</option>").join("")+
+      "</select></div>"+
+    "</div>"+
     '<div class="field-row" id="f_veh_custom_row" style="grid-template-columns:2fr 1fr;">'+
       '<div class="field"><label>Type (personnalisé)</label><input id="f_veh" value="'+esc(d.modeleNom||"")+'"></div>'+
-      '<div class="field"><label>Coût du véhicule (F CFA)</label><input id="f_cout" type="number" value="'+esc(d.cout||"")+'"></div>'+
-    "</div>";
+      '<div class="field"><label>Coût de cette part (F CFA)</label><input id="f_cout" type="number" value="'+esc(d.cout||"")+'"></div>'+
+    "</div>"+
+    '<p class="faint" style="margin-bottom:0;">Pour un véhicule partagé (1/2, 1/3…), le coût de cette part se calcule automatiquement à partir du prix catalogue — plusieurs clients pourront ensuite être attribués au même véhicule de la flotte.</p>';
   const { close } = openModal(existing ? "Modifier le véhicule souhaité" : "Ajouter un véhicule souhaité — "+client.nom, body, {
     wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
@@ -3826,13 +3879,16 @@ function openDemandeForm(client, modeles, existing){
       back.querySelector("#cancel").addEventListener("click", close);
       const picker = mountVehiculePicker(
         back.querySelector("#f_veh_pick"), back.querySelector("#f_veh_custom_row"),
-        back.querySelector("#f_veh"), back.querySelector("#f_cout"),
+        back.querySelector("#f_veh"), back.querySelector("#f_cout"), back.querySelector("#f_part"),
         modeles, { modeleId: d.modeleId, nom: d.modeleNom, cout: d.cout }
       );
       back.querySelector("#save").addEventListener("click", async ()=>{
         const modeleNom = back.querySelector("#f_veh").value.trim();
         if(!modeleNom){ toast("Le véhicule souhaité est obligatoire.", "danger"); return; }
-        const data = { modeleId: picker.getSelectedId(), modeleNom, cout: Number(back.querySelector("#f_cout").value)||0 };
+        const data = {
+          modeleId: picker.getSelectedId(), modeleNom, cout: Number(back.querySelector("#f_cout").value)||0,
+          partDenominateur: Number(back.querySelector("#f_part").value)||1,
+        };
         if(existing){
           await state.db.doc("demandes_vehicule/"+existing.id).update(data);
           await logAudit("Modification véhicule souhaité", client.nom, modeleNom);
@@ -4003,20 +4059,44 @@ function openAttributionForm(client, demande, vehicules, allocation){
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save" disabled>Attribuer</button>',
     async onMount(back, close){
       back.querySelector("#cancel").addEventListener("click", close);
-      const toutesDemandes = await getAll("demandes_vehicule");
-      const attribuesAilleurs = new Set(toutesDemandes.filter(x=>x.vehiculeAttribueId).map(x=>x.vehiculeAttribueId));
-      const dispo = vehicules.filter(x=>!attribuesAilleurs.has(x.id));
+      const [toutesDemandes, tousClients] = await Promise.all([getAll("demandes_vehicule"), getAll("clients")]);
+      /* Un véhicule de la flotte peut être partagé entre plusieurs clients
+         (1/2, 1/3…) : on ne l'exclut donc plus du choix une fois attribué —
+         on signale juste qui le partage déjà, et on demande confirmation
+         avant d'ajouter un partage supplémentaire. */
+      function partageDe(vehiculeId){
+        return toutesDemandes.filter(x=>x.vehiculeAttribueId===vehiculeId && x.id!==demande.id).map(x=>{
+          const cl = tousClients.find(c=>c.id===x.clientId);
+          return { nom: cl ? (cl.nom+" "+(cl.prenoms||"")).trim() : "?", part: x.partDenominateur||1 };
+        });
+      }
       let selectedId = null;
       mountSearchableSelect(back.querySelector("#vehPick"), {
-        items: dispo, getId: x=>x.id, getLabel: x=>x.immatriculation+" — "+(x.marque||"")+" "+(x.modele||""),
+        items: vehicules, getId: x=>x.id,
+        getLabel: x=>{
+          const partages = partageDe(x.id);
+          return x.immatriculation+" — "+(x.marque||"")+" "+(x.modele||"")+(partages.length ? " [partagé : "+partages.map(p=>p.nom+" (1/"+p.part+")").join(", ")+"]" : "");
+        },
         placeholder: "Rechercher un véhicule…",
         onChange: (id)=>{ selectedId = id; back.querySelector("#save").disabled = !id; }
       });
+      async function confirmerPartage(vehiculeId){
+        const partages = partageDe(vehiculeId);
+        if(!partages.length) return true;
+        const somme = partages.reduce((s,p)=>s+1/p.part, 0) + 1/(demande.partDenominateur||1);
+        return await askConfirm(
+          "Ce véhicule est déjà attribué à : "+partages.map(p=>p.nom+" (1/"+p.part+")").join(", ")+
+          ". L'attribuer aussi à "+client.nom+" (1/"+(demande.partDenominateur||1)+") ?"+
+          (somme>1 ? " Attention, la somme des parts dépasserait un véhicule entier ("+Math.round(somme*100)+"%)." : ""),
+          "Attribuer quand même"
+        );
+      }
       back.querySelector("#save").addEventListener("click", async ()=>{
         if(!selectedId) return;
         if(!(await verifierMontantAttribution(allocation))) return;
+        if(!(await confirmerPartage(selectedId))) return;
         await state.db.doc("demandes_vehicule/"+demande.id).update({ statut:"attribue", vehiculeAttribueId: selectedId, dateAttribution: todayIso() });
-        await logAudit("Attribution véhicule", client.nom, (dispo.find(x=>x.id===selectedId)||{}).immatriculation||"");
+        await logAudit("Attribution véhicule", client.nom, (vehicules.find(x=>x.id===selectedId)||{}).immatriculation||"");
         close(); toast("Véhicule attribué."); setView("client-detail",{id:client.id});
       });
       back.querySelector("#creerVehicule").addEventListener("click", async ()=>{
@@ -4218,10 +4298,12 @@ const MANUEL_SECTIONS = [
     <ul>
       <li><b>Fiche client</b> — coordonnées, offre actuelle et migration souhaitée. Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant(s) atteint(s) → véhicule(s) attribué(s)) montre en un coup d'œil où en est le dossier.</li>
       <li><b>Véhicules souhaités</b> — un client peut souhaiter plusieurs véhicules, éventuellement de modèles différents (ex. deux Kaiyi E5, ou un Kaiyi E5 et un Suzuki Dzire) : chacun s'ajoute comme une ligne séparée sur sa fiche, avec son propre coût. Ses virements validés remplissent ses véhicules souhaités <b>dans l'ordre où ils ont été ajoutés</b> — le premier ajouté se remplit en premier, le surplus va au suivant, etc.</li>
-      <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En ajoutant un véhicule souhaité sur une fiche client, le choix se fait par menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant un véhicule souhaité déjà enregistré, s'il correspond à un modèle du catalogue, il est présélectionné automatiquement, et son coût déjà stocké n'est jamais recalculé silencieusement si le prix du catalogue a changé depuis.</li>
+      <li><b>Véhicule partagé (parts 1/2, 1/3…)</b> — pour un client qui n'achète qu'une part d'un véhicule, choisir "1/2" ou "1/3" dans le champ "Part" en ajoutant son véhicule souhaité : le coût de sa part se calcule automatiquement (prix catalogue ÷ dénominateur). Lors de l'attribution, un même véhicule de la flotte peut être choisi pour plusieurs clients — le menu signale alors qui le partage déjà et demande confirmation avant d'ajouter un partage de plus (avec une alerte si la somme des parts dépasserait un véhicule entier).</li>
+      <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En ajoutant un véhicule souhaité sur une fiche client, le choix se fait par menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement selon la part choisie et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant un véhicule souhaité déjà enregistré, s'il correspond à un modèle du catalogue, il est présélectionné automatiquement, et son coût déjà stocké n'est jamais recalculé silencieusement si le prix du catalogue a changé depuis.</li>
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
-      <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte (non attribué ailleurs), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
+      <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte, ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
       <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués.</li>
+      <li>L'onglet "Par véhicule souhaité" liste <b>tous</b> les véhicules souhaités (attribués ou non, montant atteint ou non), groupés par type — utile pour repérer d'un coup d'œil les clients qui pourraient partager un même véhicule.</li>
       <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), un premier véhicule souhaité est créé automatiquement avec le coût extrait.</li>
       <li><b>Import de virements</b> (bouton "Importer virements (CSV)") — pour ajouter en masse des virements déjà répertoriés ailleurs (colonnes telephone;montantEnvoye;montantRecu;statut;dateVirement;reference) ; chaque ligne est rattachée au client existant dont le téléphone correspond exactement, les lignes sans correspondance sont ignorées et listées.</li>
       <li><b>Suppression</b> — le bouton "Supprimer" sur la fiche client (réservé aux administrateurs) supprime définitivement le client, ses virements et ses véhicules souhaités ; un bouton "Supprimer" existe aussi sur chaque virement et chaque véhicule souhaité (utile pour retirer un doublon ou une entrée à corriger après vérification).</li>
