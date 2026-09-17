@@ -232,6 +232,9 @@
   .pill.suspendu{background:var(--amber-soft); color:var(--amber);}
   .pill.cloture, .pill.soldee{background:var(--faint-soft); color:var(--ink-muted);}
   .pill.sinistre{background:var(--teal-soft); color:var(--teal);}
+  .pill.en_attente{background:var(--amber-soft); color:var(--amber);}
+  .pill.valide, .pill.attribue{background:var(--good-soft); color:var(--good);}
+  .pill.rejete{background:var(--danger-soft); color:var(--danger);}
 
   .badge-low{background:var(--danger-soft); color:var(--danger); padding:1px 7px; border-radius:100px; font-size:0.7rem; font-weight:700;}
 
@@ -611,6 +614,7 @@ const NAV = [
   { key:"techniciens", label:"Techniciens", ico: svgIco('<circle cx="10" cy="6.2" r="2.7"/><path d="M4 17c0-3.3 2.7-5.4 6-5.4s6 2.1 6 5.4"/>') },
   { key:"comptage", label:"Comptage stock", ico: svgIco('<rect x="3.3" y="4.3" width="2.4" height="2.4" rx="0.5"/><rect x="3.3" y="8.8" width="2.4" height="2.4" rx="0.5"/><rect x="3.3" y="13.3" width="2.4" height="2.4" rx="0.5"/><path d="M8 5.5h8.5M8 10h8.5M8 14.5h8.5"/>') },
   { key:"journal", label:"Journal", ico: svgIco('<circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/>') },
+  { key:"clients", label:"Clients", ico: svgIco('<circle cx="7.3" cy="6.3" r="2.6"/><path d="M3 15.5c0-2.7 1.9-4.4 4.3-4.4"/><circle cx="14.3" cy="12.8" r="3.2"/><path d="M14.3 11.2v3.2M12.7 12.8h3.2"/>') },
   { key:"parametres", label:"Paramètres", ico: svgIco('<circle cx="10" cy="10" r="2.6"/><path d="M10 2.8v2.1M10 15.1v2.1M17.2 10h-2.1M4.9 10H2.8M15.1 4.9l-1.5 1.5M6.4 13.6l-1.5 1.5M15.1 15.1l-1.5-1.5M6.4 6.4 4.9 4.9"/>') },
 ];
 
@@ -697,6 +701,7 @@ const DETAIL_VIEW_TAB = {
   "atelier-detail": "atelier",
   "facture-detail": "factures",
   "technicien-detail": "techniciens",
+  "client-detail": "clients",
 };
 function hasTab(key){
   if(!state.actingUser) return false;
@@ -726,6 +731,7 @@ const PILL_LABELS = {
   ouvert:"Ouvert", cloture:"Clôturé", soldee:"Soldée", recue_partielle:"Reçue partielle",
   actif:"Actif", immobilise:"Immobilisé", sorti_de_flotte:"Sorti de flotte", sinistre:"Sinistré",
   suspendu:"Suspendu", licencie:"Licencié",
+  en_attente:"En attente", valide:"Validé", rejete:"Rejeté", attribue:"Attribué",
 };
 function pill(status){ return '<span class="pill '+esc(status)+'">'+esc(PILL_LABELS[status]||status)+"</span>"; }
 
@@ -974,6 +980,26 @@ const CSV_SPECS = {
     }),
     valid: (row)=> !!row.immatriculation,
   },
+  clients: {
+    title: "clients (suivi des virements)",
+    template: "nom;prenoms;telephone;email;pays;vehiculeSouhaite;offreActuelle;migrationSouhaitee\nKouadio;Awa;+225 0102030405;awa@example.com;Côte d'Ivoire;Kaiyi E5;Full Options (Argent);\n",
+    filename: "modele-clients.csv",
+    keyField: "telephone",
+    map: (r)=>({
+      nom: pickField(r, ["nom"]),
+      prenoms: pickField(r, ["prenoms","prénoms","prenom","prénom"]),
+      telephone: pickField(r, ["telephone","téléphone","tel","whatsapp","contact"]),
+      email: pickField(r, ["email","e-mail","mail"]),
+      pays: pickField(r, ["pays","paysderesidence"]),
+      vehiculeSouhaite: pickField(r, ["vehiculesouhaite","véhiculesouhaite","vehicule","véhicule"]),
+      offreActuelle: pickField(r, ["offreactuelle","offre"]),
+      migrationSouhaitee: pickField(r, ["migrationsouhaitee","migration"]),
+      statutAttribution: "en_attente",
+      vehiculeAttribueId: null,
+      createdAt: todayIso(),
+    }),
+    valid: (row)=> !!row.nom && !!row.telephone,
+  },
 };
 
 function openCsvImport(kind){
@@ -1179,7 +1205,7 @@ function setView(name, params){
 // de refreshNavBadges(), recalculé à chaque changement d'onglet.
 const NAV_BADGE_COLOR = {
   vehicules: "danger", triage: "danger", achats: "danger",
-  stock: "amber", atelier: "amber", factures: "amber", comptage: "amber",
+  stock: "amber", atelier: "amber", factures: "amber", comptage: "amber", clients: "amber",
 };
 function renderNav(){
   const nav = document.getElementById("mainnav");
@@ -1200,8 +1226,8 @@ function renderNav(){
 async function refreshNavBadges(){
   if(!state.actingUser) return;
   try{
-    const [vehicules, articles, factures, ordres, commandes, comptages] = await Promise.all([
-      getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("commandes"), getAll("comptages")
+    const [vehicules, articles, factures, ordres, commandes, comptages, virements] = await Promise.all([
+      getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("commandes"), getAll("comptages"), getAll("virements")
     ]);
     state.navBadges = {
       vehicules: vehicules.filter(v=>v.statut==="immobilise" && (v.etapePriseEnCharge||"signale")==="signale").length,
@@ -1210,6 +1236,7 @@ async function refreshNavBadges(){
       atelier: ordres.filter(o=>o.statut==="ouvert" && !o.technicienResponsableId).length,
       factures: factures.filter(f=>f.statutPaiement==="impayee").length,
       comptage: comptages.filter(c=>c.statut && c.statut!=="valide").length,
+      clients: virements.filter(v=>v.statut==="en_attente").length,
     };
     // Bloqué (rupture de stock) réutilise la même logique que l'onglet Triage —
     // ne recalcule que le nombre, sans dupliquer toute la simulation de réservation.
@@ -1496,14 +1523,16 @@ VIEWS.vehicules = async function(view, params){
    concernent que le suivi d'un véhicule déjà existant. Toujours créé Actif ;
    passer en Immobilisé/Sinistré se fait ensuite via "Modifier" ou la fiche
    de réception ("+ Signaler un problème"). */
-function openNouveauVehiculeForm(){
+function openNouveauVehiculeForm(opts){
+  opts = opts || {};
+  const p = opts.prefill || {};
   const body =
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
-      '<div class="field"><label>Immatriculation</label><input id="f_immat" placeholder="AB-1234-CD"></div>'+
-      '<div class="field"><label>Marque</label><input id="f_marque"></div>'+
+      '<div class="field"><label>Immatriculation</label><input id="f_immat" value="'+esc(p.immatriculation||"")+'" placeholder="AB-1234-CD, ou une référence provisoire si pas encore immatriculé"></div>'+
+      '<div class="field"><label>Marque</label><input id="f_marque" value="'+esc(p.marque||"")+'"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
-      '<div class="field"><label>Modèle</label><input id="f_modele"></div>'+
+      '<div class="field"><label>Modèle</label><input id="f_modele" value="'+esc(p.modele||"")+'"></div>'+
       '<div class="field"><label>Contrat</label><input id="f_contrat" placeholder="ex. Classique, Vente"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
@@ -1511,8 +1540,8 @@ function openNouveauVehiculeForm(){
       '<div class="field"><label>Type</label><input id="f_type" placeholder="ex. Berline, Cargo"></div>'+
     "</div>"+
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
-      '<div class="field"><label>Chauffeur</label><input id="f_chauffeur"></div>'+
-      '<div class="field"><label>Téléphone chauffeur</label><input id="f_tel"></div>'+
+      '<div class="field"><label>Chauffeur</label><input id="f_chauffeur" value="'+esc(p.chauffeurNom||"")+'"></div>'+
+      '<div class="field"><label>Téléphone chauffeur</label><input id="f_tel" value="'+esc(p.chauffeurTelephone||"")+'"></div>'+
     "</div>";
   const { close } = openModal("Nouveau véhicule", body, {
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
@@ -1520,7 +1549,7 @@ function openNouveauVehiculeForm(){
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
         const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
-        if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
+        if(!immat){ toast("L'immatriculation est obligatoire (une référence provisoire convient si le véhicule n'est pas encore immatriculé).", "danger"); return; }
         const data = {
           immatriculation: immat, statut:"actif",
           marque: back.querySelector("#f_marque").value.trim(),
@@ -1532,9 +1561,15 @@ function openNouveauVehiculeForm(){
           chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
           createdAt: todayIso(),
         };
-        await state.db.collection("vehicules").add(data);
+        let ref;
+        try{
+          ref = await state.db.collection("vehicules").add(data);
+        }catch(e){ toast("Erreur : "+describeError(e)+" (immatriculation déjà utilisée ?)", "danger"); return; }
         await logAudit("Création véhicule", immat, "");
-        close(); toast("Véhicule ajouté à la flotte."); renderView();
+        close();
+        toast("Véhicule ajouté à la flotte.");
+        if(opts.onCreated) await opts.onCreated(ref.id, data);
+        else renderView();
       });
     }
   });
@@ -3292,6 +3327,265 @@ VIEWS.journal = async function(view){
   document.getElementById("jSearch").addEventListener("input", draw);
 };
 
+/* ---- Clients (suivi des virements JET_S et attribution de véhicules) -----
+   Second flux d'activité de l'utilisateur, distinct de l'atelier : vente/
+   financement de véhicules par virement bancaire. Le parcours suivi ici est
+   envoi des justificatifs (virement enregistré) → confirmation de réception
+   des fonds (validé/en attente/rejeté) → attribution d'un véhicule (existant
+   ou nouvellement créé, qui rejoint alors la flotte "Véhicules"). */
+VIEWS.clients = async function(view, params){
+  const [clients, virements] = await Promise.all([getAll("clients"), getAll("virements")]);
+  clients.sort((a,b)=> (a.nom||"").localeCompare(b.nom||""));
+  const initialTab = (params && params.filter==="attente") ? "attente" : "tous";
+  function soldeRecu(clientId){
+    return virements.filter(v=>v.clientId===clientId && v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
+  }
+  view.innerHTML =
+    '<div class="tabs">'+
+      '<button '+(initialTab==="tous"?'class="active"':'')+' data-tab="tous">Tous ('+clients.length+')</button>'+
+      '<button '+(initialTab==="attente"?'class="active"':'')+' data-tab="attente">En attente d\'attribution ('+clients.filter(c=>(c.statutAttribution||"en_attente")!=="attribue").length+')</button>'+
+    '</div>'+
+    '<div id="tabBody"></div>';
+
+  function drawList(filterAttente){
+    const rows0 = filterAttente ? clients.filter(c=>(c.statutAttribution||"en_attente")!=="attribue") : clients;
+    document.getElementById("tabBody").innerHTML =
+      '<div class="view-head"><div><p class="lede">Clients suivis via les virements JET_S — envoi des justificatifs, confirmation de réception des fonds, puis attribution d\'un véhicule.</p></div>'+
+        '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
+      '<div class="toolbar"><input type="search" id="cliSearch" placeholder="Rechercher par nom, téléphone, véhicule souhaité…"></div>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th><th>Véhicule souhaité</th><th class="num">Reçu (validé)</th><th>Statut</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
+    function draw(filter){
+      const f = (filter||"").toLowerCase();
+      const rows = rows0.filter(c=>!f || [c.nom,c.prenoms,c.telephone,c.vehiculeSouhaite].some(x=>(x||"").toLowerCase().includes(f)));
+      document.getElementById("cliTbody").innerHTML = rows.length ? rows.map(c=>
+        '<tr class="clickable" data-id="'+c.id+'">'+
+          '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
+          '<td>'+esc(c.telephone||"—")+'</td>'+
+          '<td>'+esc(c.vehiculeSouhaite||"—")+'</td>'+
+          '<td class="num mono">'+fmtMoney(soldeRecu(c.id))+'</td>'+
+          '<td>'+pill(c.statutAttribution||"en_attente")+'</td>'+
+        "</tr>"
+      ).join("") : '<tr class="empty-row"><td colspan="5">Aucun client ne correspond.</td></tr>';
+      document.querySelectorAll("#cliTbody [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("client-detail",{id:tr.getAttribute("data-id")})));
+    }
+    draw("");
+    document.getElementById("cliSearch").addEventListener("input", e=>draw(e.target.value));
+    document.getElementById("newClient").addEventListener("click", ()=>openClientForm());
+    document.getElementById("importCsv").addEventListener("click", ()=>openCsvImport("clients"));
+  }
+  drawList(initialTab==="attente");
+  view.querySelectorAll(".tabs button").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      view.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      drawList(b.getAttribute("data-tab")==="attente");
+    });
+  });
+};
+
+function openClientForm(existing){
+  const c = existing || {};
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Nom</label><input id="f_nom" value="'+esc(c.nom||"")+'"></div>'+
+      '<div class="field"><label>Prénoms</label><input id="f_prenoms" value="'+esc(c.prenoms||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Téléphone</label><input id="f_tel" value="'+esc(c.telephone||"")+'"></div>'+
+      '<div class="field"><label>Email</label><input id="f_email" value="'+esc(c.email||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 2fr;">'+
+      '<div class="field"><label>Pays</label><input id="f_pays" value="'+esc(c.pays||"")+'"></div>'+
+      '<div class="field"><label>Véhicule souhaité</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Offre actuelle</label><input id="f_offre" value="'+esc(c.offreActuelle||"")+'"></div>'+
+      '<div class="field"><label>Migration souhaitée</label><input id="f_migration" value="'+esc(c.migrationSouhaitee||"")+'" placeholder="ex. passage d\'une offre à une autre"></div>'+
+    "</div>"+
+    '<div class="field"><label>Notes</label><textarea id="f_notes" rows="2">'+esc(c.notes||"")+"</textarea></div>";
+  const { close } = openModal(existing ? "Modifier le client" : "Nouveau client", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const nom = back.querySelector("#f_nom").value.trim();
+        const telephone = back.querySelector("#f_tel").value.trim();
+        if(!nom || !telephone){ toast("Le nom et le téléphone sont obligatoires.", "danger"); return; }
+        const data = {
+          nom, prenoms: back.querySelector("#f_prenoms").value.trim(), telephone,
+          email: back.querySelector("#f_email").value.trim(), pays: back.querySelector("#f_pays").value.trim(),
+          vehiculeSouhaite: back.querySelector("#f_veh").value.trim(), offreActuelle: back.querySelector("#f_offre").value.trim(),
+          migrationSouhaitee: back.querySelector("#f_migration").value.trim(), notes: back.querySelector("#f_notes").value.trim(),
+        };
+        if(existing){
+          await state.db.doc("clients/"+existing.id).update(data);
+          await logAudit("Modification client", nom, "");
+        } else {
+          data.statutAttribution = "en_attente"; data.vehiculeAttribueId = null; data.createdAt = todayIso();
+          await state.db.collection("clients").add(data);
+          await logAudit("Création client", nom, "");
+        }
+        close(); toast("Client enregistré."); renderView();
+      });
+    }
+  });
+}
+
+VIEWS["client-detail"] = async function(view, params){
+  const c = await getOne("clients", params.id);
+  if(!c){ view.innerHTML = '<p class="faint">Client introuvable.</p>'; return; }
+  const [virements, vehicules] = await Promise.all([getAll("virements"), getAll("vehicules")]);
+  const mesVirements = virements.filter(v=>v.clientId===c.id).sort((a,b)=>new Date(b.dateVirement||b.createdAt)-new Date(a.dateVirement||a.createdAt));
+  const totalEnvoye = mesVirements.reduce((s,v)=>s+(Number(v.montantEnvoye)||0),0);
+  const totalRecu = mesVirements.filter(v=>v.statut==="valide").reduce((s,v)=>s+(Number(v.montantRecu)||0),0);
+  const vehiculeAttribue = c.vehiculeAttribueId ? vehicules.find(v=>v.id===c.vehiculeAttribueId) : null;
+
+  view.innerHTML =
+    '<button class="back-link" id="back">&larr; Retour aux clients</button>'+
+    '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(c.nom)+' '+esc(c.prenoms||"")+'</h2>'+
+      '<p class="lede">'+esc(c.telephone||"—")+(c.email?" · "+esc(c.email):"")+(c.pays?" · "+esc(c.pays):"")+'</p></div>'+
+      '<div class="row-actions">'+pill(c.statutAttribution||"en_attente")+'<button class="btn" id="editClient">Modifier</button></div></div>'+
+    '<div class="kpi-grid">'+
+      '<div class="kpi"><div class="lbl">Total envoyé</div><div class="val">'+fmtMoney(totalEnvoye)+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Total reçu (validé)</div><div class="val">'+fmtMoney(totalRecu)+'</div></div>'+
+      '<div class="kpi"><div class="lbl">Virements</div><div class="val">'+mesVirements.length+'</div><div class="sub">'+mesVirements.filter(v=>v.statut==="en_attente").length+' en attente</div></div>'+
+    "</div>"+
+    '<div class="card">'+
+      "<h3>Véhicule souhaité</h3>"+
+      '<p class="muted" style="margin-top:0;">'+esc(c.vehiculeSouhaite||"Non renseigné")+(c.offreActuelle?(" · Offre : "+esc(c.offreActuelle)):"")+(c.migrationSouhaitee?(" · Migration : "+esc(c.migrationSouhaitee)):"")+"</p>"+
+      (vehiculeAttribue
+        ? '<p style="margin-bottom:0;">Véhicule attribué : <a href="#" id="goVehicule" class="mono">'+esc(vehiculeAttribue.immatriculation)+"</a> ("+esc(vehiculeAttribue.marque)+" "+esc(vehiculeAttribue.modele)+")</p>"
+        : '<button class="btn primary" id="attribuer">Attribuer un véhicule</button>')+
+    "</div>"+
+    (c.notes ? '<div class="callout"><span class="lbl">Notes</span><p>'+esc(c.notes)+"</p></div>" : "")+
+    '<div class="view-head"><h3 class="section-title" style="margin-bottom:0;">Virements</h3><button class="btn" id="newVirement">+ Virement</button></div>'+
+    '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th class="num">Envoyé</th><th class="num">Reçu</th><th>Statut</th><th>Référence</th><th></th></tr></thead><tbody id="virTbody"></tbody></table></div>';
+
+  function drawVirements(){
+    view.querySelector("#virTbody").innerHTML = mesVirements.length ? mesVirements.map(v=>
+      "<tr>"+
+        "<td>"+fmtDate(v.dateVirement||v.createdAt)+"</td>"+
+        '<td class="num mono">'+fmtMoney(v.montantEnvoye)+"</td>"+
+        '<td class="num mono">'+fmtMoney(v.montantRecu)+"</td>"+
+        "<td>"+pill(v.statut||"en_attente")+"</td>"+
+        "<td>"+esc(v.reference||"—")+"</td>"+
+        '<td class="row-actions">'+
+          (v.statut==="en_attente" ? '<button class="btn small" data-valider="'+v.id+'">Valider</button><button class="btn small ghost" data-rejeter="'+v.id+'">Rejeter</button>' : '<button class="btn small" data-edit="'+v.id+'">Modifier</button>')+
+        "</td>"+
+      "</tr>"
+    ).join("") : '<tr class="empty-row"><td colspan="6">Aucun virement enregistré.</td></tr>';
+    view.querySelectorAll("[data-valider]").forEach(b=>b.addEventListener("click", async ()=>{
+      await state.db.doc("virements/"+b.getAttribute("data-valider")).update({ statut:"valide" });
+      await logAudit("Virement validé", c.nom, "");
+      toast("Virement validé."); setView("client-detail",{id:c.id});
+    }));
+    view.querySelectorAll("[data-rejeter]").forEach(b=>b.addEventListener("click", async ()=>{
+      const ok = await askConfirm("Rejeter ce virement ?", "Rejeter");
+      if(!ok) return;
+      await state.db.doc("virements/"+b.getAttribute("data-rejeter")).update({ statut:"rejete" });
+      await logAudit("Virement rejeté", c.nom, "");
+      toast("Virement rejeté."); setView("client-detail",{id:c.id});
+    }));
+    view.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openVirementForm(c, mesVirements.find(v=>v.id===b.getAttribute("data-edit")))));
+  }
+  drawVirements();
+
+  view.querySelector("#back").addEventListener("click", ()=>setView("clients"));
+  view.querySelector("#editClient").addEventListener("click", ()=>openClientForm(c));
+  view.querySelector("#newVirement").addEventListener("click", ()=>openVirementForm(c));
+  const attribBtn = view.querySelector("#attribuer");
+  if(attribBtn) attribBtn.addEventListener("click", ()=>openAttributionForm(c, vehicules));
+  const goVeh = view.querySelector("#goVehicule");
+  if(goVeh) goVeh.addEventListener("click", (e)=>{ e.preventDefault(); setView("vehicule-detail",{id:vehiculeAttribue.id}); });
+};
+
+function openVirementForm(client, existing){
+  const v = existing || {};
+  const body =
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Montant envoyé (F CFA)</label><input id="f_envoye" type="number" value="'+esc(v.montantEnvoye||"")+'"></div>'+
+      '<div class="field"><label>Montant reçu (F CFA)</label><input id="f_recu" type="number" value="'+esc(v.montantRecu||"")+'"></div>'+
+    "</div>"+
+    '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+      '<div class="field"><label>Date du virement</label><input id="f_date" type="date" value="'+esc((v.dateVirement||"").slice(0,10))+'"></div>'+
+      '<div class="field"><label>Statut</label><select id="f_statut">'+
+        ["en_attente","valide","rejete"].map(s=>'<option value="'+s+'" '+((v.statut||"en_attente")===s?"selected":"")+'>'+PILL_LABELS[s]+"</option>").join("")+
+      "</select></div>"+
+    "</div>"+
+    '<div class="field"><label>Référence (n° de transaction, capture…)</label><input id="f_ref" value="'+esc(v.reference||"")+'"></div>'+
+    '<div class="field"><label>Notes</label><textarea id="f_notes" rows="2">'+esc(v.notes||"")+"</textarea></div>";
+  const { close } = openModal(existing ? "Modifier le virement" : "Nouveau virement — "+client.nom, body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const data = {
+          clientId: client.id,
+          montantEnvoye: Number(back.querySelector("#f_envoye").value)||0,
+          montantRecu: Number(back.querySelector("#f_recu").value)||0,
+          dateVirement: back.querySelector("#f_date").value || null,
+          statut: back.querySelector("#f_statut").value,
+          reference: back.querySelector("#f_ref").value.trim(),
+          notes: back.querySelector("#f_notes").value.trim(),
+        };
+        if(existing){
+          await state.db.doc("virements/"+existing.id).update(data);
+          await logAudit("Modification virement", client.nom, "");
+        } else {
+          data.createdAt = todayIso();
+          await state.db.collection("virements").add(data);
+          await logAudit("Ajout virement", client.nom, fmtMoney(data.montantEnvoye));
+        }
+        close(); toast("Virement enregistré."); setView("client-detail",{id:client.id});
+      });
+    }
+  });
+}
+
+function openAttributionForm(client, vehicules){
+  const body =
+    '<p class="muted" style="margin-top:0;">Choisissez un véhicule déjà enregistré dans la flotte, ou créez-en un nouveau pour ce client.</p>'+
+    '<div class="field"><label>Véhicule existant</label><div id="vehPick"></div></div>'+
+    '<p class="faint" style="text-align:center;margin:10px 0;">— ou —</p>'+
+    '<button type="button" class="btn" id="creerVehicule" style="width:100%;">+ Créer un nouveau véhicule pour ce client</button>';
+  const { close } = openModal("Attribuer un véhicule — "+client.nom, body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save" disabled>Attribuer</button>',
+    async onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      const allClients = await getAll("clients");
+      const attribuesAilleurs = new Set(allClients.filter(x=>x.id!==client.id && x.vehiculeAttribueId).map(x=>x.vehiculeAttribueId));
+      const dispo = vehicules.filter(x=>!attribuesAilleurs.has(x.id));
+      let selectedId = null;
+      mountSearchableSelect(back.querySelector("#vehPick"), {
+        items: dispo, getId: x=>x.id, getLabel: x=>x.immatriculation+" — "+(x.marque||"")+" "+(x.modele||""),
+        placeholder: "Rechercher un véhicule…",
+        onChange: (id)=>{ selectedId = id; back.querySelector("#save").disabled = !id; }
+      });
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        if(!selectedId) return;
+        await state.db.doc("clients/"+client.id).update({ statutAttribution:"attribue", vehiculeAttribueId: selectedId, dateAttribution: todayIso() });
+        await logAudit("Attribution véhicule", client.nom, (dispo.find(x=>x.id===selectedId)||{}).immatriculation||"");
+        close(); toast("Véhicule attribué."); setView("client-detail",{id:client.id});
+      });
+      back.querySelector("#creerVehicule").addEventListener("click", ()=>{
+        close();
+        openNouveauVehiculeForm({
+          prefill: { chauffeurNom: (client.nom+" "+(client.prenoms||"")).trim(), chauffeurTelephone: client.telephone },
+          onCreated: async (vehiculeId)=>{
+            await state.db.doc("clients/"+client.id).update({ statutAttribution:"attribue", vehiculeAttribueId: vehiculeId, dateAttribution: todayIso() });
+            await logAudit("Attribution véhicule", client.nom, "nouveau véhicule");
+            toast("Véhicule créé et attribué.");
+            setView("client-detail",{id:client.id});
+          }
+        });
+      });
+    }
+  });
+}
+
 /* ---- Paramètres ---------------------------------------------------------- */
 VIEWS.parametres = async function(view){
   if(!isAdmin()){
@@ -3468,6 +3762,17 @@ const MANUEL_SECTIONS = [
   `},
   { id:"journal", title:"Journal", html:`
     <p>Historique de toutes les actions sensibles (créations, modifications, suppressions, sanctions, réinitialisation…) avec la date, l'auteur et son rôle. C'est la première chose à consulter en cas de question sur "qui a fait quoi".</p>
+  `},
+  { id:"clients", title:"Clients", html:`
+    <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution d'un véhicule :</p>
+    <ul>
+      <li><b>Fiche client</b> — coordonnées, véhicule souhaité, offre actuelle et migration souhaitée (si le client change d'avis en cours de route, il suffit de modifier ces champs).</li>
+      <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
+      <li><b>Attribution du véhicule</b> — une fois les fonds confirmés, "Attribuer un véhicule" permet de choisir un véhicule déjà dans la flotte (non attribué à un autre client), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>.</li>
+      <li><b>Import CSV</b> — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Le modèle de fichier est téléchargeable depuis le bouton "Importer CSV" ; les doublons sont repérés par numéro de téléphone.</li>
+      <li>L'onglet "En attente d'attribution" liste les clients dont le véhicule n'est pas encore attribué. Une pastille orange sur l'icône du menu compte les virements en attente de validation.</li>
+    </ul>
+    <p>Comme les autres onglets, l'accès "Clients" s'accorde ou se retire par agent depuis Paramètres.</p>
   `},
   { id:"parametres", title:"Paramètres", html:`
     <p>Réservé aux administrateurs.</p>
