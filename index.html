@@ -996,7 +996,7 @@ const CSV_SPECS = {
   },
   clients: {
     title: "clients (suivi des virements)",
-    template: "nom;prenoms;telephone;email;pays;vehiculeSouhaite;coutVehiculeSouhaite;offreActuelle;migrationSouhaitee\nKouadio;Awa;+225 0102030405;awa@example.com;Côte d'Ivoire;Kaiyi E5;16412;Full Options (Argent);\n",
+    template: "nom;prenoms;telephone;email;pays;vehiculeSouhaite;coutVehiculeSouhaite;offreActuelle;migrationSouhaitee;notes\nKouadio;Awa;+225 0102030405;awa@example.com;Côte d'Ivoire;Kaiyi E5;16412;Full Options (Argent);;\n",
     filename: "modele-clients.csv",
     keyField: "telephone",
     map: (r)=>{
@@ -1013,6 +1013,7 @@ const CSV_SPECS = {
         coutVehiculeSouhaite: Number(coutSaisi || (coutExtrait||"").replace(/\s/g,"")) || 0,
         offreActuelle: pickField(r, ["offreactuelle","offre"]),
         migrationSouhaitee: pickField(r, ["migrationsouhaitee","migration"]),
+        notes: pickField(r, ["notes","note","commentaire"]),
         statutAttribution: "en_attente",
         vehiculeAttribueId: null,
         createdAt: todayIso(),
@@ -3598,6 +3599,7 @@ VIEWS["client-detail"] = async function(view, params){
         "<td>"+esc(v.reference||"—")+"</td>"+
         '<td class="row-actions">'+
           (v.statut==="en_attente" ? '<button class="btn small" data-valider="'+v.id+'">Valider</button><button class="btn small ghost" data-rejeter="'+v.id+'">Rejeter</button>' : '<button class="btn small" data-edit="'+v.id+'">Modifier</button>')+
+          (isAdmin() ? '<button class="btn small danger" data-delete-vir="'+v.id+'">Supprimer</button>' : "")+
         "</td>"+
       "</tr>"
     ).join("") : '<tr class="empty-row"><td colspan="6">Aucun virement enregistré.</td></tr>';
@@ -3614,6 +3616,15 @@ VIEWS["client-detail"] = async function(view, params){
       toast("Virement rejeté."); setView("client-detail",{id:c.id});
     }));
     view.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>openVirementForm(c, mesVirements.find(v=>v.id===b.getAttribute("data-edit")))));
+    view.querySelectorAll("[data-delete-vir]").forEach(b=>b.addEventListener("click", async ()=>{
+      const ok = await askConfirm("Supprimer définitivement ce virement ?", "Supprimer");
+      if(!ok) return;
+      try{
+        await state.db.doc("virements/"+b.getAttribute("data-delete-vir")).delete();
+        await logAudit("Suppression virement", c.nom, "");
+        toast("Virement supprimé."); setView("client-detail",{id:c.id});
+      }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
+    }));
   }
   drawVirements();
 
@@ -3690,7 +3701,7 @@ function openVirementForm(client, existing){
    l'import, pas à la génération du fichier. */
 function openImporterVirements(){
   const body =
-    '<p class="muted" style="margin-top:0;">Importe des virements déjà répertoriés (colonnes : telephone;montantEnvoye;montantRecu;statut;dateVirement;reference). Chaque ligne est rattachée au client existant dont le téléphone correspond exactement ; les lignes sans correspondance sont ignorées et listées ci-dessous.</p>'+
+    '<p class="muted" style="margin-top:0;">Importe des virements déjà répertoriés (colonnes : telephone;montantEnvoye;montantRecu;statut;dateVirement;reference;notes — notes est optionnelle). Chaque ligne est rattachée au client existant dont le téléphone correspond exactement ; les lignes sans correspondance sont ignorées et listées ci-dessous.</p>'+
     '<div class="dropzone" id="dz"><input type="file" id="csvFile" accept=".csv,text/csv" style="margin-bottom:8px;"><br><span class="faint">ou collez le contenu CSV ci-dessous</span><textarea id="csvPaste" rows="4" style="margin-top:8px;"></textarea></div>'+
     '<div id="previewBox"></div>';
   const { close } = openModal("Importer des virements", body, {
@@ -3716,6 +3727,7 @@ function openImporterVirements(){
             statut: ["valide","en_attente","rejete"].includes(statutBrut) ? statutBrut : "en_attente",
             dateVirement: pickField(r,["datevirement","date"])||null,
             reference: pickField(r,["reference","référence","ref"]),
+            notes: pickField(r,["notes","note","commentaire"]),
           };
           if(client){ row.clientId = client.id; row.clientNom = client.nom+" "+(client.prenoms||""); matched.push(row); }
           else { row.telephone = telRaw; unmatched.push(row); }
@@ -3742,7 +3754,7 @@ function openImporterVirements(){
           const r = matched[i];
           await state.db.collection("virements").add({
             clientId: r.clientId, montantEnvoye: r.montantEnvoye, montantRecu: r.montantRecu,
-            statut: r.statut, dateVirement: r.dateVirement, reference: r.reference, notes:"",
+            statut: r.statut, dateVirement: r.dateVirement, reference: r.reference, notes: r.notes||"",
             createdAt: todayIso(),
           });
           btn.textContent = "Import… "+(i+1)+"/"+matched.length;
@@ -4004,7 +4016,7 @@ const MANUEL_SECTIONS = [
       <li>L'onglet "En attente d'attribution" sépare les clients <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule souhaité puis par ordre d'atteinte du montant (premier arrivé, premier servi), des clients encore <b>en cours d'accumulation</b>. Une pastille rouge sur l'icône du menu compte les clients prêts mais pas encore attribués.</li>
       <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), le coût est extrait automatiquement.</li>
       <li><b>Import de virements</b> (bouton "Importer virements (CSV)") — pour ajouter en masse des virements déjà répertoriés ailleurs (colonnes telephone;montantEnvoye;montantRecu;statut;dateVirement;reference) ; chaque ligne est rattachée au client existant dont le téléphone correspond exactement, les lignes sans correspondance sont ignorées et listées.</li>
-      <li><b>Suppression</b> — le bouton "Supprimer" sur la fiche client (réservé aux administrateurs) supprime définitivement le client et tous ses virements.</li>
+      <li><b>Suppression</b> — le bouton "Supprimer" sur la fiche client (réservé aux administrateurs) supprime définitivement le client et tous ses virements ; un bouton "Supprimer" existe aussi sur chaque ligne de virement (utile pour retirer un doublon ou une entrée à corriger après vérification).</li>
     </ul>
     <p>Comme les autres onglets, l'accès "Clients" s'accorde ou se retire par agent depuis Paramètres.</p>
   `},
