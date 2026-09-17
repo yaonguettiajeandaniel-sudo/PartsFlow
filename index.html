@@ -3447,9 +3447,18 @@ function statutAttributionClient(demandesClient){
 function libelleVehicule(demande){
   return demande.modeleNom + ((demande.partDenominateur||1)>1 ? " (1/"+demande.partDenominateur+")" : "");
 }
+/* Pour classer/regrouper par "type de véhicule" (Prêts à attribuer, Par
+   véhicule souhaité), on n'accepte que les modèles réellement présents dans
+   le catalogue — un texte libre ("Budget en dessous de 10 000 €") ou un
+   commentaire de prix non nettoyé ne sont pas des types exploitables pour
+   repérer qui pourrait partager un même véhicule. */
+function typeVehiculeCatalogue(demande, modeles){
+  const m = demande.modeleId ? modeles.find(x=>x.id===demande.modeleId) : null;
+  return m ? m.nom : "Non déterminé";
+}
 
 VIEWS.clients = async function(view, params){
-  const [clients, virements, demandes] = await Promise.all([getAll("clients"), getAll("virements"), getAll("demandes_vehicule")]);
+  const [clients, virements, demandes, modeles] = await Promise.all([getAll("clients"), getAll("virements"), getAll("demandes_vehicule"), getAll("modeles_vehicule")]);
   clients.sort((a,b)=> (a.nom||"").localeCompare(b.nom||""));
   const initialTab = (params && ["attente","types"].includes(params.filter)) ? params.filter : "tous";
   const nonAttribuesCount = clients.filter(c=>demandes.some(d=>d.clientId===c.id && d.statut!=="attribue")).length;
@@ -3507,7 +3516,7 @@ VIEWS.clients = async function(view, params){
 
     const groupes = {};
     prets.forEach(x=>{
-      const key = x.demande.modeleNom || "Non précisé";
+      const key = typeVehiculeCatalogue(x.demande, modeles);
       (groupes[key] = groupes[key]||[]).push(x);
     });
 
@@ -3553,7 +3562,7 @@ VIEWS.clients = async function(view, params){
     });
     const groupes = {};
     items.forEach(x=>{
-      const key = x.demande.modeleNom || "Non précisé";
+      const key = typeVehiculeCatalogue(x.demande, modeles);
       (groupes[key] = groupes[key]||[]).push(x);
     });
 
@@ -4303,7 +4312,7 @@ const MANUEL_SECTIONS = [
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
       <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte, ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
       <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués.</li>
-      <li>L'onglet "Par véhicule souhaité" liste <b>tous</b> les véhicules souhaités (attribués ou non, montant atteint ou non), groupés par type — utile pour repérer d'un coup d'œil les clients qui pourraient partager un même véhicule.</li>
+      <li>L'onglet "Par véhicule souhaité" liste <b>tous</b> les véhicules souhaités (attribués ou non, montant atteint ou non), groupés par type — utile pour repérer d'un coup d'œil les clients qui pourraient partager un même véhicule. Le type affiché ici est toujours un modèle du catalogue ; un véhicule souhaité en "Autre / personnalisé…" (texte libre, budget non précisé…) apparaît sous "Non déterminé" plutôt que sous son texte brut.</li>
       <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), un premier véhicule souhaité est créé automatiquement avec le coût extrait.</li>
       <li><b>Import de virements</b> (bouton "Importer virements (CSV)") — pour ajouter en masse des virements déjà répertoriés ailleurs (colonnes telephone;montantEnvoye;montantRecu;statut;dateVirement;reference) ; chaque ligne est rattachée au client existant dont le téléphone correspond exactement, les lignes sans correspondance sont ignorées et listées.</li>
       <li><b>Suppression</b> — le bouton "Supprimer" sur la fiche client (réservé aux administrateurs) supprime définitivement le client, ses virements et ses véhicules souhaités ; un bouton "Supprimer" existe aussi sur chaque virement et chaque véhicule souhaité (utile pour retirer un doublon ou une entrée à corriger après vérification).</li>
