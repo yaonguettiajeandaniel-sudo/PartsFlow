@@ -3548,7 +3548,13 @@ function openClientForm(existing){
       }
 
       const customRow = back.querySelector("#f_veh_custom_row");
-      function syncCustomRow(){
+      /* fromUserChange=false (affichage initial) : on garde tel quel ce qui est
+         déjà enregistré sur la fiche, même si le catalogue a changé de prix
+         depuis — évite qu'ouvrir "Modifier" ne réécrive silencieusement le coût
+         d'un client existant. fromUserChange=true (l'utilisateur vient de
+         choisir/changer le véhicule dans le menu) : on applique le prix
+         catalogue actuel, pour une nouvelle fiche ou un changement de choix. */
+      function syncCustomRow(fromUserChange){
         const isAutre = !vehiculeSouhaiteId || vehiculeSouhaiteId===AUTRE_ID;
         customRow.style.display = isAutre ? "" : "none";
         const f_veh = back.querySelector("#f_veh"), f_cout = back.querySelector("#f_cout");
@@ -3556,16 +3562,21 @@ function openClientForm(existing){
           f_veh.readOnly = false; f_cout.readOnly = false;
         } else {
           const m = modeles.find(x=>x.id===vehiculeSouhaiteId);
-          f_veh.value = m.nom; f_cout.value = m.cout;
           f_veh.readOnly = true; f_cout.readOnly = true;
+          if(fromUserChange){
+            f_veh.value = m.nom; f_cout.value = m.cout;
+          } else {
+            f_veh.value = c.vehiculeSouhaite || m.nom;
+            f_cout.value = c.coutVehiculeSouhaite || m.cout;
+          }
         }
       }
       mountSearchableSelect(back.querySelector("#f_veh_pick"), {
         items, getId: x=>x.id, getLabel: x=> x.id===AUTRE_ID ? x.nom : x.nom+" ("+fmtMoney(x.cout)+")",
         value: vehiculeSouhaiteId, placeholder: "Choisir un véhicule…",
-        onChange: (id)=>{ vehiculeSouhaiteId = id; syncCustomRow(); }
+        onChange: (id)=>{ vehiculeSouhaiteId = id; syncCustomRow(true); }
       });
-      syncCustomRow();
+      syncCustomRow(false);
 
       back.querySelector("#save").addEventListener("click", async ()=>{
         const nom = back.querySelector("#f_nom").value.trim();
