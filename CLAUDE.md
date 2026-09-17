@@ -4,7 +4,7 @@ Application interne de gestion d'atelier pour la flotte VTC de l'utilisateur (ca
 
 ## Conventions de ce projet
 
-- Toute modification du schéma passe par un nouveau fichier `migration-N.sql` (N croissant — le dernier est `migration-12.sql`) contenant uniquement le SQL du changement. On donne son contenu à l'utilisateur pour qu'il l'exécute lui-même dans Supabase (SQL Editor) — jamais exécuté par Claude directement (pas d'accès à la base depuis cette machine).
+- Toute modification du schéma passe par un nouveau fichier `migration-N.sql` (N croissant — le dernier est `migration-13.sql`) contenant uniquement le SQL du changement. On donne son contenu à l'utilisateur pour qu'il l'exécute lui-même dans Supabase (SQL Editor) — jamais exécuté par Claude directement (pas d'accès à la base depuis cette machine).
 - `git push` est toujours fait par l'utilisateur dans son propre terminal, jamais par Claude.
 - Après toute modification de `index.html`, valider la syntaxe JS avant de committer (pas de Node sur cette machine — utiliser `osascript -l JavaScript` avec `new Function(source)` sur le contenu du tag `<script>`, voir l'historique de conversation pour le pattern exact).
 - Ne jamais mettre la clé `service_role` Supabase dans le code ; seule la clé publique (`sb_publishable_...`) est dans `index.html`.
@@ -22,4 +22,6 @@ Second flux d'activité de l'utilisateur (vente/financement de véhicules à des
 - Les virements déjà répertoriés ailleurs (ex. dépouillement des captures d'écran JET_S) s'importent en masse via un import dédié (`openImporterVirements`, bouton "Importer virements (CSV)") qui rattache chaque ligne à un client par téléphone — distinct du système `CSV_SPECS` générique car il doit résoudre une relation vers une autre table.
 - Suppression définitive d'un client (et de ses virements, via `on delete cascade`) possible depuis sa fiche, réservée aux administrateurs.
 
-Les 176 captures du dossier `VIREMENTS JET_S` ont été ré-analysées une seconde fois (transaction par transaction, pas seulement des totaux agrégés) pour produire un fichier `import-virements.csv` prêt à importer, rattaché par téléphone aux clients déjà connus du Google Sheet.
+Les 176 captures du dossier `VIREMENTS JET_S` ont été ré-analysées une seconde fois (transaction par transaction, pas seulement des totaux agrégés) pour produire un fichier `import-virements-complet.csv` prêt à importer, rattaché par téléphone aux clients déjà connus du Google Sheet (les 16 personnes sans correspondance fiable ou sans téléphone dans le Sheet ont une fiche provisoire dans `clients-a-verifier.csv`, à vérifier/fusionner par l'utilisateur).
+
+**Catalogue de modèles de véhicules** (migration-13.sql, table `modeles_vehicule`) : petit catalogue nom + coût, géré depuis un bouton "Modèles de véhicules" sur l'onglet Clients (ajout/modification/suppression réservés aux administrateurs). Choisir un modèle sur la fiche client préremplit automatiquement le type et le coût du véhicule souhaité (`openClientForm`, via `mountSearchableSelect`) — ça reste un remplissage ponctuel (pas un lien dynamique) : si le prix du catalogue change plus tard, les fiches clients déjà enregistrées gardent leur valeur au moment du choix.

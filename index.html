@@ -3417,7 +3417,7 @@ VIEWS.clients = async function(view, params){
   function drawTous(){
     document.getElementById("tabBody").innerHTML =
       '<div class="view-head"><div><p class="lede">Clients suivis via les virements JET_S — envoi des justificatifs, confirmation de réception des fonds, puis attribution d\'un véhicule.</p></div>'+
-        '<div class="row-actions"><button class="btn" id="importVirements">Importer virements (CSV)</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
+        '<div class="row-actions"><button class="btn" id="modelesVeh">Modèles de véhicules</button><button class="btn" id="importVirements">Importer virements (CSV)</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
       '<div class="toolbar"><input type="search" id="cliSearch" placeholder="Rechercher par nom, téléphone, véhicule souhaité…"></div>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th><th>Véhicule souhaité</th><th class="num">Progression</th><th>Statut</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
     function draw(filter){
@@ -3440,6 +3440,7 @@ VIEWS.clients = async function(view, params){
     document.getElementById("newClient").addEventListener("click", ()=>openClientForm());
     document.getElementById("importCsv").addEventListener("click", ()=>openCsvImport("clients"));
     document.getElementById("importVirements").addEventListener("click", ()=>openImporterVirements());
+    document.getElementById("modelesVeh").addEventListener("click", ()=>openModelesVehiculeManager());
   }
 
   function drawAttente(){
@@ -3515,6 +3516,7 @@ function openClientForm(existing){
       '<div class="field"><label>Téléphone</label><input id="f_tel" value="'+esc(c.telephone||"")+'"></div>'+
       '<div class="field"><label>Email</label><input id="f_email" value="'+esc(c.email||"")+'"></div>'+
     "</div>"+
+    '<div class="field"><label>Modèle du catalogue (préremplit le type et le coût ci-dessous)</label><div id="f_modele"></div></div>'+
     '<div class="field-row" style="grid-template-columns:1fr 2fr 1fr;">'+
       '<div class="field"><label>Pays</label><input id="f_pays" value="'+esc(c.pays||"")+'"></div>'+
       '<div class="field"><label>Véhicule souhaité (type)</label><input id="f_veh" value="'+esc(c.vehiculeSouhaite||"")+'"></div>'+
@@ -3528,8 +3530,19 @@ function openClientForm(existing){
   const { close } = openModal(existing ? "Modifier le client" : "Nouveau client", body, {
     wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
-    onMount(back, close){
+    async onMount(back, close){
       back.querySelector("#cancel").addEventListener("click", close);
+      const modeles = await getAll("modeles_vehicule");
+      let vehiculeSouhaiteId = c.vehiculeSouhaiteId || null;
+      mountSearchableSelect(back.querySelector("#f_modele"), {
+        items: modeles, getId: m=>m.id, getLabel: m=>m.nom+" ("+fmtMoney(m.cout)+")",
+        value: vehiculeSouhaiteId, placeholder: "Choisir un modèle enregistré…",
+        onChange: (id)=>{
+          vehiculeSouhaiteId = id;
+          const m = modeles.find(x=>x.id===id);
+          if(m){ back.querySelector("#f_veh").value = m.nom; back.querySelector("#f_cout").value = m.cout; }
+        }
+      });
       back.querySelector("#save").addEventListener("click", async ()=>{
         const nom = back.querySelector("#f_nom").value.trim();
         const telephone = back.querySelector("#f_tel").value.trim();
@@ -3540,6 +3553,7 @@ function openClientForm(existing){
           vehiculeSouhaite: back.querySelector("#f_veh").value.trim(), offreActuelle: back.querySelector("#f_offre").value.trim(),
           migrationSouhaitee: back.querySelector("#f_migration").value.trim(), notes: back.querySelector("#f_notes").value.trim(),
           coutVehiculeSouhaite: Number(back.querySelector("#f_cout").value)||0,
+          vehiculeSouhaiteId,
         };
         if(existing){
           await state.db.doc("clients/"+existing.id).update(data);
@@ -3550,6 +3564,70 @@ function openClientForm(existing){
           await logAudit("Création client", nom, "");
         }
         close(); toast("Client enregistré."); renderView();
+      });
+    }
+  });
+}
+
+function openModelesVehiculeManager(){
+  const body =
+    (isAdmin() ? '<div class="field-row" style="grid-template-columns:2fr 1fr auto;align-items:end;">'+
+      '<div class="field"><label>Nom du modèle</label><input id="m_nom" placeholder="ex. Kaiyi E5"></div>'+
+      '<div class="field"><label>Coût (F CFA)</label><input id="m_cout" type="number"></div>'+
+      '<button type="button" class="btn primary" id="m_add">+ Ajouter</button>'+
+    "</div>" : "")+
+    '<div class="table-wrap" style="margin-top:12px;"><table class="grid"><thead><tr><th>Modèle</th><th class="num">Coût</th>'+(isAdmin()?"<th></th>":"")+'</tr></thead><tbody id="modelesTbody"></tbody></table></div>';
+  const { close } = openModal("Modèles de véhicules", body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Fermer</button>',
+    async onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      async function draw(){
+        const modeles = await getAll("modeles_vehicule");
+        modeles.sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
+        back.querySelector("#modelesTbody").innerHTML = modeles.length ? modeles.map(m=>
+          "<tr><td>"+esc(m.nom)+'</td><td class="num mono">'+fmtMoney(m.cout)+"</td>"+
+          (isAdmin() ? '<td class="row-actions"><button class="btn small" data-edit="'+m.id+'">Modifier</button><button class="btn small danger" data-delete="'+m.id+'">Supprimer</button></td>' : "")+
+          "</tr>"
+        ).join("") : '<tr class="empty-row"><td colspan="3">Aucun modèle enregistré.</td></tr>';
+        if(isAdmin()){
+          back.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click", ()=>{
+            const m = modeles.find(x=>x.id===b.getAttribute("data-edit"));
+            back.querySelector("#m_nom").value = m.nom;
+            back.querySelector("#m_cout").value = m.cout;
+            back.querySelector("#m_add").textContent = "Enregistrer";
+            back.querySelector("#m_add").setAttribute("data-editing", m.id);
+          }));
+          back.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click", async ()=>{
+            const ok = await askConfirm("Supprimer ce modèle du catalogue ? Les clients l'ayant déjà choisi gardent leur type et coût actuels.", "Supprimer");
+            if(!ok) return;
+            try{
+              await state.db.doc("modeles_vehicule/"+b.getAttribute("data-delete")).delete();
+              await logAudit("Suppression modèle véhicule", "", "");
+              toast("Modèle supprimé."); draw();
+            }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
+          }));
+        }
+      }
+      draw();
+      const addBtn = back.querySelector("#m_add");
+      if(addBtn) addBtn.addEventListener("click", async ()=>{
+        const nom = back.querySelector("#m_nom").value.trim();
+        const cout = Number(back.querySelector("#m_cout").value)||0;
+        if(!nom){ toast("Le nom du modèle est obligatoire.", "danger"); return; }
+        const editingId = addBtn.getAttribute("data-editing");
+        try{
+          if(editingId){
+            await state.db.doc("modeles_vehicule/"+editingId).update({ nom, cout });
+            await logAudit("Modification modèle véhicule", nom, "");
+          } else {
+            await state.db.collection("modeles_vehicule").add({ nom, cout, createdAt: todayIso() });
+            await logAudit("Création modèle véhicule", nom, "");
+          }
+        }catch(e){ toast("Erreur : "+describeError(e), "danger"); return; }
+        back.querySelector("#m_nom").value = ""; back.querySelector("#m_cout").value = "";
+        addBtn.textContent = "+ Ajouter"; addBtn.removeAttribute("data-editing");
+        toast("Modèle enregistré."); draw();
       });
     }
   });
@@ -4011,6 +4089,7 @@ const MANUEL_SECTIONS = [
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution d'un véhicule :</p>
     <ul>
       <li><b>Fiche client</b> — coordonnées, véhicule souhaité (type) et son coût, offre actuelle et migration souhaitée (si le client change d'avis en cours de route, il suffit de modifier ces champs). Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant atteint → véhicule attribué) montre en un coup d'œil où en est le dossier.</li>
+      <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En choisissant un modèle du catalogue sur la fiche client, le type et le coût se préremplissent automatiquement ; ils restent modifiables ensuite au cas par cas.</li>
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client. Une jauge de progression (reçu / coût du véhicule souhaité) est visible sur la fiche et dans les listes.</li>
       <li><b>Attribution du véhicule</b> — "Attribuer un véhicule" permet de choisir un véhicule déjà dans la flotte (non attribué à un autre client), ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si le montant reçu (validé) n'atteint pas encore le coût renseigné sur la fiche, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
       <li>L'onglet "En attente d'attribution" sépare les clients <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule souhaité puis par ordre d'atteinte du montant (premier arrivé, premier servi), des clients encore <b>en cours d'accumulation</b>. Une pastille rouge sur l'icône du menu compte les clients prêts mais pas encore attribués.</li>
