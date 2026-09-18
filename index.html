@@ -238,7 +238,7 @@
   .pill.envoye, .pill.envoyee{background:var(--accent-soft); color:var(--accent-ink);}
   .pill.accepte, .pill.ouvert, .pill.actif{background:var(--good-soft); color:var(--good);}
   .pill.refuse, .pill.immobilise, .pill.licencie{background:var(--danger-soft); color:var(--danger);}
-  .pill.suspendu{background:var(--amber-soft); color:var(--amber);}
+  .pill.suspendu, .pill.entree{background:var(--amber-soft); color:var(--amber);}
   .pill.cloture, .pill.soldee{background:var(--faint-soft); color:var(--ink-muted);}
   .pill.sinistre{background:var(--teal-soft); color:var(--teal);}
   .pill.en_attente{background:var(--amber-soft); color:var(--amber);}
@@ -768,7 +768,7 @@ const PILL_LABELS = {
   impayee:"Impayée", partielle:"Partielle", payee:"Payée", annulee:"Annulée",
   brouillon:"Brouillon", envoye:"Envoyé", envoyee:"Envoyée", accepte:"Accepté", refuse:"Refusé",
   ouvert:"Ouvert", cloture:"Clôturé", soldee:"Soldée", recue_partielle:"Reçue partielle",
-  actif:"Actif", immobilise:"Immobilisé", sorti_de_flotte:"Sorti de flotte", sinistre:"Sinistré",
+  actif:"Actif", entree:"Entrée", immobilise:"Inactif", sorti_de_flotte:"Sorti de flotte", sinistre:"Sinistré",
   suspendu:"Suspendu", licencie:"Licencié",
   en_attente:"En attente", valide:"Validé", rejete:"Rejeté", attribue:"Attribué",
 };
@@ -825,11 +825,11 @@ async function ouvrirHistoriqueImmobilisation(vehiculeId, motif, detail){
     motif: motif||null, detail: detail||null, createdAt: todayIso(),
   });
 }
-async function clorreHistoriqueImmobilisation(vehiculeId){
+async function clorreHistoriqueImmobilisation(vehiculeId, motifSortie){
   const historique = await getAll("historique_immobilisations");
   const ouvert = historique.filter(h=>h.vehiculeId===vehiculeId && !h.dateSortie)
     .sort((a,b)=>new Date(b.dateEntree)-new Date(a.dateEntree))[0];
-  if(ouvert) await state.db.doc("historique_immobilisations/"+ouvert.id).update({ dateSortie: todayIso() });
+  if(ouvert) await state.db.doc("historique_immobilisations/"+ouvert.id).update({ dateSortie: todayIso(), motifSortie: motifSortie||null });
 }
 
 /* ---- synchronisation statut véhicule / cycle de l'OR --------------------
@@ -863,6 +863,34 @@ async function reactiverVehiculeApresOr(vehiculeId, orIdFerme){
     diagnosticConfirme:null, diagnosticConfirmeDate:null
   });
   await clorreHistoriqueImmobilisation(vehiculeId);
+}
+
+/* ---- passage automatique "Entrée" → "Inactif" ----------------------------
+   Un véhicule tout juste reçu à la base n'est pas forcément là pour une
+   panne (ça peut être administratif) : il reste "Entrée" au départ. Il ne
+   bascule en "Inactif" (l'ancien "Immobilisé", même mécanique de suivi) que
+   si le motif est un motif d'atelier ET qu'il reste SEUIL_JOURS_INACTIF
+   jours consécutifs à la base — l'épisode d'immobilisation déjà ouvert
+   (historique_immobilisations) n'est ni refermé ni redémarré, juste le
+   statut du véhicule change. Vérifié à chaque changement de vue (comme
+   refreshNavBadges, dont c'est le voisin d'appel), jamais bloquant. */
+const MOTIFS_ATELIER = Object.keys(MOTIFS_INACTIVITE).filter(k=>k!=="administratif");
+const ETATS_A_LA_BASE = ["entree","immobilise"];
+const SEUIL_JOURS_INACTIF = 2;
+async function escaladerEntreesEnInactif(){
+  try{
+    const vehicules = await getAll("vehicules");
+    const maintenant = Date.now();
+    const aEscalader = vehicules.filter(v=>{
+      if(v.statut!=="entree" || !MOTIFS_ATELIER.includes(v.motifInactivite)) return false;
+      const ref = v.immobiliseDepuis || v.receptionDate;
+      return ref && (maintenant - new Date(ref).getTime())/86400000 >= SEUIL_JOURS_INACTIF;
+    });
+    for(const v of aEscalader){
+      await state.db.doc("vehicules/"+v.id).update({ statut:"immobilise" });
+      await logAudit("Passage automatique en Inactif", v.immatriculation, SEUIL_JOURS_INACTIF+" jours à la base");
+    }
+  }catch(e){ /* jamais bloquant, comme les badges */ }
 }
 
 /* --------------------------------------------------------------- modals */
@@ -1035,7 +1063,7 @@ const CSV_SPECS = {
       contrat: pickField(r, ["contrat"]),
       chauffeurNom: pickField(r, ["chauffeurnom","chauffeur","conducteur"]),
       chauffeurTelephone: pickField(r, ["chauffeurtelephone","telephone","tel","contact"]),
-      statut: (["actif","immobilise","sinistre","sorti_de_flotte"].includes(pickField(r,["statut","etat","état"]).toLowerCase()) ? pickField(r,["statut","etat","état"]).toLowerCase() : "actif"),
+      statut: (["actif","entree","immobilise","sinistre","sorti_de_flotte"].includes(pickField(r,["statut","etat","état"]).toLowerCase()) ? pickField(r,["statut","etat","état"]).toLowerCase() : "actif"),
       createdAt: todayIso(),
     }),
     valid: (row)=> !!row.immatriculation,
@@ -1282,6 +1310,7 @@ function setView(name, params){
   renderNav();
   renderView();
   refreshNavBadges();
+  escaladerEntreesEnInactif();
 }
 // Couleur du badge par onglet — rouge pour "personne n'agit dessus" /
 // bloquant, orange pour "à surveiller, pas urgent". Le nombre lui-même vient
@@ -1317,7 +1346,7 @@ async function refreshNavBadges(){
       getAll("vehicules"), getAll("articles"), getAll("factures"), getAll("ordres"), getAll("commandes"), getAll("comptages"), getAll("virements")
     ]);
     state.navBadges = {
-      vehicules: vehicules.filter(v=>v.statut==="immobilise" && (v.etapePriseEnCharge||"signale")==="signale").length,
+      vehicules: vehicules.filter(v=>ETATS_A_LA_BASE.includes(v.statut) && (v.etapePriseEnCharge||"signale")==="signale").length,
       stock: articles.filter(a=>(Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0)).length,
       achats: commandes.filter(c=>c.urgente && c.statut!=="soldee").length,
       atelier: ordres.filter(o=>o.statut==="ouvert" && !o.technicienResponsableId).length,
@@ -1586,7 +1615,7 @@ VIEWS.vehicules = async function(view, params){
   view.innerHTML =
     '<div class="tabs">'+
       '<button '+(initialTab==="tous"?'class="active"':'')+' data-tab="tous">Tous ('+vehicules.length+')</button>'+
-      '<button '+(initialTab==="encours"?'class="active"':'')+' data-tab="encours">En cours de prise en charge ('+vehicules.filter(v=>v.statut==="immobilise").length+')</button>'+
+      '<button '+(initialTab==="encours"?'class="active"':'')+' data-tab="encours">En cours de prise en charge ('+vehicules.filter(v=>ETATS_A_LA_BASE.includes(v.statut)).length+')</button>'+
       '<button '+(initialTab==="sinistres"?'class="active"':'')+' data-tab="sinistres">Sinistrés ('+vehicules.filter(v=>v.statut==="sinistre").length+')</button>'+
     '</div>'+
     '<div id="tabBody"></div>';
@@ -1613,7 +1642,7 @@ VIEWS.vehicules = async function(view, params){
           '<td>'+esc(v.groupe||"—")+"</td>"+
           '<td>'+esc(v.type||"—")+"</td>"+
           '<td>'+esc(v.contrat||"—")+"</td>"+
-          '<td>'+pill(v.statut||"actif")+(v.statut==="immobilise" && v.motifInactivite ? '<br><span class="faint" style="font-size:.78rem;">'+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite)+"</span>" : "")+"</td>"+
+          '<td>'+pill(v.statut||"actif")+(ETATS_A_LA_BASE.includes(v.statut) && v.motifInactivite ? '<br><span class="faint" style="font-size:.78rem;">'+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite)+"</span>" : "")+"</td>"+
         "</tr>"
       ).join("") : '<tr class="empty-row"><td colspan="7">Aucun véhicule ne correspond.</td></tr>';
       document.querySelectorAll("#vehTbody [data-id]").forEach(tr=>{
@@ -1629,7 +1658,7 @@ VIEWS.vehicules = async function(view, params){
 
   async function drawEnCours(){
     const [devis, ordres] = await Promise.all([getAll("devis"), getAll("ordres")]);
-    const enCours = vehicules.filter(v=>v.statut==="immobilise")
+    const enCours = vehicules.filter(v=>ETATS_A_LA_BASE.includes(v.statut))
       .sort((a,b)=> new Date(a.receptionDate||a.immobiliseDepuis||0) - new Date(b.receptionDate||b.immobiliseDepuis||0));
 
     function etapeAffichee(v){
@@ -1746,11 +1775,11 @@ function openVehiculeForm(existing){
     '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
       '<div class="field"><label>Immatriculation</label><input id="f_immat" value="'+esc(v.immatriculation||"")+'" placeholder="AB-1234-CD"></div>'+
       '<div class="field"><label>Statut</label><select id="f_statut">'+
-        ["actif","immobilise","sinistre","sorti_de_flotte"].map(s=>'<option value="'+s+'" '+(v.statut===s?"selected":"")+'>'+PILL_LABELS[s]+"</option>").join("")+
+        ["actif","entree","immobilise","sinistre","sorti_de_flotte"].map(s=>'<option value="'+s+'" '+(v.statut===s?"selected":"")+'>'+PILL_LABELS[s]+"</option>").join("")+
       "</select></div>"+
     "</div>"+
-    '<div class="field-row" id="f_inactivite_row" style="grid-template-columns:1fr 1fr;'+(v.statut==="immobilise"?"":"display:none;")+'">'+
-      '<div class="field"><label>Motif d\'immobilisation</label><select id="f_motif">'+
+    '<div class="field-row" id="f_inactivite_row" style="grid-template-columns:1fr 1fr;'+(ETATS_A_LA_BASE.includes(v.statut)?"":"display:none;")+'">'+
+      '<div class="field"><label>Motif de présence à la base</label><select id="f_motif">'+
         '<option value="">— à préciser —</option>'+
         Object.entries(MOTIFS_INACTIVITE).map(([k,l])=>'<option value="'+k+'" '+((v.motifInactivite||"")===k?"selected":"")+'>'+l+"</option>").join("")+
       "</select></div>"+
@@ -1786,7 +1815,7 @@ function openVehiculeForm(existing){
       const sinRow = back.querySelector("#f_sinistre_row");
       const sinRow2 = back.querySelector("#f_sinistre_row2");
       function syncRows(){
-        inactRow.style.display = statutSel.value==="immobilise" ? "" : "none";
+        inactRow.style.display = ETATS_A_LA_BASE.includes(statutSel.value) ? "" : "none";
         sinRow.style.display = sinRow2.style.display = statutSel.value==="sinistre" ? "" : "none";
       }
       statutSel.addEventListener("change", syncRows);
@@ -1795,8 +1824,8 @@ function openVehiculeForm(existing){
         const immat = back.querySelector("#f_immat").value.trim().toUpperCase();
         if(!immat){ toast("L'immatriculation est obligatoire.", "danger"); return; }
         const nouveauStatut = statutSel.value;
-        if(nouveauStatut==="immobilise" && !back.querySelector("#f_motif").value){
-          toast("Choisissez un motif d'immobilisation.", "danger"); return;
+        if(ETATS_A_LA_BASE.includes(nouveauStatut) && !back.querySelector("#f_motif").value){
+          toast("Choisissez un motif de présence à la base.", "danger"); return;
         }
         if(nouveauStatut==="sinistre" && (!back.querySelector("#f_assureur").value.trim() || !back.querySelector("#f_garage").value.trim())){
           toast("Renseignez l'assureur et le garage destinataire.", "danger"); return;
@@ -1812,7 +1841,7 @@ function openVehiculeForm(existing){
           chauffeurNom: back.querySelector("#f_chauffeur").value.trim(),
           chauffeurTelephone: back.querySelector("#f_tel").value.trim(),
         };
-        if(nouveauStatut==="immobilise"){
+        if(ETATS_A_LA_BASE.includes(nouveauStatut)){
           data.motifInactivite = back.querySelector("#f_motif").value;
           data.detailInactivite = back.querySelector("#f_detail").value.trim();
         } else {
@@ -1828,22 +1857,27 @@ function openVehiculeForm(existing){
           data.sinistreAssureur = null; data.sinistreGarage = null;
           data.sinistreDate = null; data.sinistreRetourEstime = null;
         }
-        // Track "depuis quand immobilisé" for the file d'attente de prise en charge —
-        // stamped the moment the status changes to immobilisé, cleared otherwise.
-        const entreeEnImmobilisation = nouveauStatut==="immobilise" && (!existing || existing.statut!=="immobilise");
-        if(entreeEnImmobilisation) data.immobiliseDepuis = todayIso();
-        if(nouveauStatut!=="immobilise") data.immobiliseDepuis = null;
+        // Track "depuis quand à la base" pour le dossier de prise en charge —
+        // stampé au moment où le véhicule entre en Entrée/Inactif, effacé à la
+        // sortie ; inchangé lors d'une simple escalade Entrée→Inactif (le
+        // véhicule n'a jamais quitté la base entre les deux).
+        const etaitALaBase = existing && ETATS_A_LA_BASE.includes(existing.statut);
+        const estALaBase = ETATS_A_LA_BASE.includes(nouveauStatut);
+        const entreeEnBase = estALaBase && !etaitALaBase;
+        const sortieDeLaBase = etaitALaBase && !estALaBase;
+        if(entreeEnBase) data.immobiliseDepuis = todayIso();
+        if(!estALaBase) data.immobiliseDepuis = null;
         // Dossier de prise en charge (signalement → diagnostic) : ouvert au moment
-        // où le véhicule entre en immobilisation ("fiche de réception" remplie ici
+        // où le véhicule entre à la base ("fiche de réception" remplie ici
         // même si c'est un agent qui saisit ce que le chauffeur a constaté),
-        // effacé dès qu'on quitte le statut Immobilisé/Sinistré.
-        if(entreeEnImmobilisation){
+        // effacé dès qu'on en sort.
+        if(entreeEnBase){
           data.etapePriseEnCharge = "signale";
           data.receptionPar = actingUserName();
           data.receptionDate = todayIso();
           data.diagnosticTechnicienId = null; data.diagnosticTechnicienNom = null;
           data.diagnosticAssigneDate = null; data.diagnosticConfirme = null; data.diagnosticConfirmeDate = null;
-        } else if(nouveauStatut!=="immobilise"){
+        } else if(!estALaBase){
           data.etapePriseEnCharge = null; data.receptionPar = null; data.receptionDate = null;
           data.diagnosticTechnicienId = null; data.diagnosticTechnicienNom = null;
           data.diagnosticAssigneDate = null; data.diagnosticConfirme = null; data.diagnosticConfirmeDate = null;
@@ -1858,9 +1892,8 @@ function openVehiculeForm(existing){
           vehiculeId = ref.id;
           await logAudit("Création véhicule", immat, "");
         }
-        const sortieDImmobilisation = existing && existing.statut==="immobilise" && nouveauStatut!=="immobilise";
-        if(entreeEnImmobilisation) await ouvrirHistoriqueImmobilisation(vehiculeId, data.motifInactivite, data.detailInactivite);
-        else if(sortieDImmobilisation) await clorreHistoriqueImmobilisation(vehiculeId);
+        if(entreeEnBase) await ouvrirHistoriqueImmobilisation(vehiculeId, data.motifInactivite, data.detailInactivite);
+        else if(sortieDeLaBase) await clorreHistoriqueImmobilisation(vehiculeId);
         close();
         toast("Véhicule enregistré.");
         renderView();
@@ -1894,7 +1927,7 @@ function openReceptionForm(vehicules){
         items: vehicules, getId:v=>v.id, getLabel:v=>v.immatriculation+" — "+(v.chauffeurNom||""), placeholder:"Rechercher une immatriculation…",
         onChange:(id)=>{
           vehiculeChoisi = vehicules.find(v=>v.id===id) || null;
-          if(vehiculeChoisi && (vehiculeChoisi.statut==="immobilise" || vehiculeChoisi.statut==="sinistre")){
+          if(vehiculeChoisi && (vehiculeChoisi.statut==="entree" || vehiculeChoisi.statut==="immobilise" || vehiculeChoisi.statut==="sinistre")){
             warnBox.innerHTML = '<div class="callout amber"><span class="lbl">Déjà en cours</span><p>'+esc(vehiculeChoisi.immatriculation)+' est déjà '+(vehiculeChoisi.statut==="sinistre"?"marqué sinistré":"en cours de prise en charge")+'. <a href="#" id="goVeh">Voir sa fiche</a> plutôt que d\'ouvrir un nouveau signalement.</p></div>';
             saveBtn.disabled = true;
             const goLink = warnBox.querySelector("#goVeh");
@@ -1912,7 +1945,7 @@ function openReceptionForm(vehicules){
         if(!motif){ toast("Choisissez un motif.", "danger"); return; }
         const constat = back.querySelector("#f_constat").value.trim();
         await state.db.doc("vehicules/"+vehiculeChoisi.id).update({
-          statut:"immobilise", motifInactivite: motif, detailInactivite: constat,
+          statut:"entree", motifInactivite: motif, detailInactivite: constat,
           immobiliseDepuis: todayIso(),
           etapePriseEnCharge:"signale", receptionPar: actingUserName(), receptionDate: todayIso(),
           diagnosticTechnicienId:null, diagnosticTechnicienNom:null, diagnosticAssigneDate:null,
@@ -1921,7 +1954,7 @@ function openReceptionForm(vehicules){
         await ouvrirHistoriqueImmobilisation(vehiculeChoisi.id, motif, constat);
         await logAudit("Réception véhicule", vehiculeChoisi.immatriculation, motif);
         close();
-        toast("Réception enregistrée — "+vehiculeChoisi.immatriculation+" immobilisé.");
+        toast("Réception enregistrée — "+vehiculeChoisi.immatriculation+" entré à la base.");
         setView("vehicule-detail",{id:vehiculeChoisi.id});
       });
     }
@@ -2028,7 +2061,7 @@ VIEWS["vehicule-detail"] = async function(view, params){
     '<button class="back-link" id="back">&larr; Retour aux véhicules</button>'+
     '<div class="view-head"><div><h2 style="font-size:1.6rem;">'+esc(v.immatriculation)+'</h2>'+
       '<p class="lede">'+esc(v.marque)+" "+esc(v.modele)+(v.type?" · "+esc(v.type):"")+" · Chauffeur : "+esc(v.chauffeurNom||"non renseigné")+"</p></div>"+
-      '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button>'+(v.statut==="immobilise" ? '<button class="btn danger" id="cmdUrgente">Commande urgente</button>' : "")+'</div></div>'+
+      '<div class="row-actions"><button class="btn" id="editVeh">Modifier</button>'+(ETATS_A_LA_BASE.includes(v.statut) ? '<button class="btn" id="sortieVeh">Sortie</button>' : "")+(v.statut==="immobilise" ? '<button class="btn danger" id="cmdUrgente">Commande urgente</button>' : "")+'</div></div>'+
     '<div class="kpi-grid">'+
       '<div class="kpi"><div class="lbl">Statut</div><div class="val" style="font-size:1.1rem;">'+pill(v.statut||"actif")+'</div></div>'+
       '<div class="kpi"><div class="lbl">Groupe / Contrat</div><div class="val" style="font-size:1.1rem;">'+esc(v.groupe||"—")+' / '+esc(v.contrat||"—")+'</div></div>'+
@@ -2036,10 +2069,10 @@ VIEWS["vehicule-detail"] = async function(view, params){
       '<div class="kpi"><div class="lbl">Réglé à ce jour</div><div class="val">'+fmtMoney(totalRegle)+'</div></div>'+
       '<div class="kpi"><div class="lbl">Montant dû</div><div class="val '+(totalDu>0?"danger":"")+'">'+fmtMoney(totalDu)+'</div></div>'+
     "</div>"+
-    (v.statut==="immobilise" ?
-      '<div class="callout danger"><span class="lbl">Immobilisation — '+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite||"motif non précisé")+'</span><p>'+esc(v.detailInactivite||"Aucun constat renseigné.")+(v.receptionPar?" — signalé par "+esc(v.receptionPar)+(v.receptionDate?" le "+fmtDate(v.receptionDate):""):"")+'</p></div>'
+    (ETATS_A_LA_BASE.includes(v.statut) ?
+      '<div class="callout '+(v.statut==="immobilise"?"danger":"amber")+'"><span class="lbl">'+(v.statut==="immobilise"?"Inactif":"Entrée")+' — '+esc(MOTIFS_INACTIVITE[v.motifInactivite]||v.motifInactivite||"motif non précisé")+'</span><p>'+esc(v.detailInactivite||"Aucun constat renseigné.")+(v.receptionPar?" — signalé par "+esc(v.receptionPar)+(v.receptionDate?" le "+fmtDate(v.receptionDate):""):"")+'</p></div>'
     : "")+
-    (v.statut==="immobilise" ? renderDiagnosticCard(v) : "")+
+    (ETATS_A_LA_BASE.includes(v.statut) ? renderDiagnosticCard(v) : "")+
     (v.statut==="sinistre" ?
       '<div class="callout"><span class="lbl">Sinistré — pris en charge par un autre garage</span>'+
         '<p>Assureur : <b>'+esc(v.sinistreAssureur||"—")+'</b> · Garage : <b>'+esc(v.sinistreGarage||"—")+'</b>'+
@@ -2061,16 +2094,18 @@ VIEWS["vehicule-detail"] = async function(view, params){
     "</tbody></table></div>"+
     '<details style="margin-top:22px;">'+
       '<summary class="section-title" style="display:inline-block; cursor:pointer; margin-bottom:10px;">Historique des passages en atelier ('+monHistorique.length+')</summary>'+
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>Entrée</th><th>Sortie</th><th class="num">Durée</th><th>Motif</th></tr></thead><tbody>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Entrée</th><th>Sortie</th><th class="num">Durée</th><th>Motif d\'entrée</th><th>Motif de sortie</th></tr></thead><tbody>'+
         (monHistorique.length ? monHistorique.map(h=>{
           const dureeJours = Math.max(0, Math.round(((h.dateSortie?new Date(h.dateSortie):new Date()) - new Date(h.dateEntree))/86400000));
-          return '<tr><td>'+fmtDateTime(h.dateEntree)+'</td><td>'+(h.dateSortie?fmtDateTime(h.dateSortie):'<span class="pill immobilise">En cours</span>')+'</td><td class="num mono">'+dureeJours+' j</td><td>'+esc(MOTIFS_INACTIVITE[h.motif]||h.motif||"—")+(h.detail?'<br><span class="faint" style="font-size:.78rem;">'+esc(h.detail)+"</span>":"")+"</td></tr>";
-        }).join("") : '<tr class="empty-row"><td colspan="4">Aucun passage enregistré.</td></tr>')+
+          return '<tr><td>'+fmtDateTime(h.dateEntree)+'</td><td>'+(h.dateSortie?fmtDateTime(h.dateSortie):'<span class="pill immobilise">En cours</span>')+'</td><td class="num mono">'+dureeJours+' j</td><td>'+esc(MOTIFS_INACTIVITE[h.motif]||h.motif||"—")+(h.detail?'<br><span class="faint" style="font-size:.78rem;">'+esc(h.detail)+"</span>":"")+'</td><td>'+esc(h.motifSortie||"—")+"</td></tr>";
+        }).join("") : '<tr class="empty-row"><td colspan="5">Aucun passage enregistré.</td></tr>')+
       "</tbody></table></div>"+
     "</details>";
 
   view.querySelector("#back").addEventListener("click", ()=>setView("vehicules"));
   view.querySelector("#editVeh").addEventListener("click", ()=>openVehiculeForm(v));
+  const sortieBtn = view.querySelector("#sortieVeh");
+  if(sortieBtn) sortieBtn.addEventListener("click", ()=>openSortieForm(v));
   const cmdBtn = view.querySelector("#cmdUrgente");
   if(cmdBtn) cmdBtn.addEventListener("click", async ()=>{
     const [fournisseurs, articles] = await Promise.all([getAll("fournisseurs"), getAll("articles")]);
@@ -2099,6 +2134,38 @@ VIEWS["vehicule-detail"] = async function(view, params){
   view.querySelectorAll("[data-f]").forEach(tr=>tr.addEventListener("click", ()=>setView("facture-detail",{id:tr.getAttribute("data-f")})));
   view.querySelectorAll("[data-or]").forEach(tr=>tr.addEventListener("click", ()=>setView("atelier-detail",{id:tr.getAttribute("data-or")})));
 };
+
+/* ---- Sortie de la base ---------------------------------------------------
+   Ramène un véhicule "Entrée" ou "Inactif" à "Actif", avec un motif de
+   sortie libre (réparation terminée, dossier administratif résolu…),
+   enregistré sur l'épisode d'historique déjà ouvert plutôt que sur une
+   nouvelle ligne — cette action clôt l'épisode, elle n'en ouvre pas un
+   nouveau. Complète (sans le remplacer) le retour automatique à "Actif" déjà
+   déclenché par la clôture d'un OR (reactiverVehiculeApresOr) : utile pour
+   les cas sans OR, notamment un motif administratif. */
+function openSortieForm(v){
+  const body =
+    '<p class="muted" style="margin-top:0;">Ramène <b>'+esc(v.immatriculation)+'</b> au statut Actif.</p>'+
+    '<div class="field"><label>Motif de sortie</label><input id="f_motif_sortie" placeholder="ex. Réparation terminée, dossier administratif résolu…"></div>';
+  const { close } = openModal("Sortie de la base — "+v.immatriculation, body, {
+    footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Confirmer la sortie</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      back.querySelector("#save").addEventListener("click", async ()=>{
+        const motifSortie = back.querySelector("#f_motif_sortie").value.trim();
+        await state.db.doc("vehicules/"+v.id).update({
+          statut:"actif", immobiliseDepuis:null, motifInactivite:null, detailInactivite:null,
+          etapePriseEnCharge:null, receptionPar:null, receptionDate:null,
+          diagnosticTechnicienId:null, diagnosticTechnicienNom:null, diagnosticAssigneDate:null,
+          diagnosticConfirme:null, diagnosticConfirmeDate:null, diagnosticPiecesSuggerees:null,
+        });
+        await clorreHistoriqueImmobilisation(v.id, motifSortie);
+        await logAudit("Sortie de la base", v.immatriculation, motifSortie||"—");
+        close(); toast("Véhicule réactivé."); setView("vehicule-detail",{id:v.id});
+      });
+    }
+  });
+}
 
 /* ---- Carte "Diagnostic" sur la fiche véhicule ---------------------------
    Trois états, correspondant au parcours signalement → diagnostic → devis :
@@ -4778,7 +4845,7 @@ const MANUEL_SECTIONS = [
     <p><b>Première ligne :</b> véhicules suivis, total dû par la flotte (factures non soldées), valeur du stock au coût d'achat, références sous seuil, ordres de réparation ouverts.</p>
     <p><b>Deuxième ligne — état de la flotte :</b></p>
     <ul>
-      <li><b>Immobilisés</b> : véhicules actuellement au statut "Immobilisé".</li>
+      <li><b>Immobilisés</b> : véhicules actuellement au statut "Inactif" (pas "Entrée" — un véhicule tout juste arrivé, motif administratif ou pas encore 2 jours à la base, ne compte pas encore ici).</li>
       <li><b>En réparation</b> : véhicules ayant un ordre de réparation ouvert.</li>
       <li><b>En attente de prise en charge</b> : immobilisés mais pas encore en réparation — ce chiffre correspond exactement à la file de l'onglet <a href="#m-triage">Diagnostic</a>.</li>
       <li><b>Réparés cette semaine / ce mois-ci</b> : ordres de réparation clôturés depuis lundi, et depuis le 1er du mois.</li>
@@ -4801,20 +4868,22 @@ const MANUEL_SECTIONS = [
     <p><b>Statut d'un véhicule :</b></p>
     <ul>
       <li><b>Actif</b> : en circulation normale.</li>
-      <li><b>Immobilisé</b> : à l'arrêt pour réparation chez nous. Un <b>motif</b> devient alors obligatoire — Mécanique, Tôlerie, Peinture ou Documents administratifs — accompagné du <b>constat du chauffeur</b> (ce qu'il a signalé, en texte libre). Passer un véhicule à ce statut ouvre automatiquement son dossier de prise en charge (voir plus bas).</li>
+      <li><b>Entrée</b> : vient d'arriver à la base, quelle qu'en soit la raison — pas forcément une panne. Un <b>motif</b> devient alors obligatoire — Mécanique, Tôlerie, Peinture ou Documents administratifs — accompagné du <b>constat du chauffeur</b> (ce qu'il a signalé, en texte libre). Passer un véhicule à ce statut ouvre automatiquement son dossier de prise en charge (voir plus bas).</li>
+      <li><b>Inactif</b> : à l'arrêt pour réparation chez nous. Un véhicule "Entrée" y bascule <b>automatiquement</b> si le motif est un motif d'atelier (pas administratif) et qu'il reste <b>2 jours consécutifs</b> à la base — avant ce délai, il reste affiché "Entrée" même si un diagnostic est déjà en cours dessus. Un ordre de réparation ouvert fait aussi passer directement à "Inactif", sans attendre ce délai (voir plus bas).</li>
       <li><b>Sinistré</b> : accidenté, pris en charge par l'assurance ailleurs. Demande l'assureur et le garage destinataire ; la date du sinistre et la date de retour estimée sont facultatives.</li>
-      <li><b>Sorti de flotte</b> : véhicule qui n'est plus suivi.</li>
+      <li><b>Sorti de flotte</b> : véhicule déclaré épave ou vendu, qui n'est plus suivi.</li>
     </ul>
-    <p><b>Ce statut change aussi tout seul</b> pour éviter les oublis : dès qu'un ordre de réparation s'ouvre pour un véhicule (devis envoyé à l'atelier, ou OR ouvert directement), il passe automatiquement "Immobilisé" s'il ne l'était pas déjà. À la clôture de cet OR, il repasse automatiquement "Actif" — sauf s'il a un autre OR encore ouvert en parallèle.</p>
-    <p><b>Réception d'un véhicule :</b> le bouton <b>+ Signaler un problème</b> (onglets "Tous" et "En cours de prise en charge") ouvre la fiche dédiée à l'agent qui accueille le chauffeur — juste le véhicule, le motif et le constat, sans les champs de la fiche véhicule complète (marque, contrat…) qui n'ont rien à faire à cet instant. Valider immobilise le véhicule et ouvre son dossier de prise en charge à l'étape "Signalé". Si le véhicule est déjà immobilisé ou sinistré, le formulaire le signale et propose d'aller directement à sa fiche plutôt que d'ouvrir un doublon.</p>
-    <p><b>Dossier de prise en charge (signalement → diagnostic) :</b> sur la fiche d'un véhicule immobilisé, une carte "Diagnostic" suit trois étapes :</p>
+    <p><b>"Sortie" n'est pas un statut où le véhicule reste</b> — c'est l'action qui referme un passage "Entrée"/"Inactif" et ramène le véhicule à "Actif". Le bouton <b>Sortie</b> (visible sur la fiche d'un véhicule "Entrée" ou "Inactif") demande un motif libre (ex. "Réparation terminée", "Dossier administratif résolu") et enregistre la date et l'heure de sortie sur l'historique déjà ouvert (voir plus bas). Dans le cas d'une vraie réparation, ce retour à "Actif" se fait aussi <b>automatiquement</b> à la clôture de l'ordre de réparation, sans passer par ce bouton — sauf si un autre OR reste ouvert en parallèle sur le même véhicule.</p>
+    <p><b>Réception d'un véhicule :</b> le bouton <b>+ Signaler un problème</b> (onglets "Tous" et "En cours de prise en charge") ouvre la fiche dédiée à l'agent qui accueille le chauffeur — juste le véhicule, le motif et le constat, sans les champs de la fiche véhicule complète (marque, contrat…) qui n'ont rien à faire à cet instant. Valider passe le véhicule "Entrée" et ouvre son dossier de prise en charge à l'étape "Signalé". Si le véhicule est déjà à la base ou sinistré, le formulaire le signale et propose d'aller directement à sa fiche plutôt que d'ouvrir un doublon.</p>
+    <p><b>Historique des passages en atelier</b> (section rétractable en bas de la fiche d'un véhicule) : chaque passage "Entrée" → "Sortie" (ou "Sorti de flotte") est archivé avec la date et l'heure d'entrée, la date et l'heure de sortie, la durée, le motif d'entrée et le motif de sortie.</p>
+    <p><b>Dossier de prise en charge (signalement → diagnostic) :</b> sur la fiche d'un véhicule "Entrée" ou "Inactif", une carte "Diagnostic" suit trois étapes :</p>
     <ol>
       <li><b>Signalé</b> — le constat du chauffeur est enregistré, personne n'a encore été désigné pour vérifier le véhicule.</li>
       <li><b>Diagnostic en cours</b> — un mécanicien a été désigné pour l'examiner ; le véhicule reste dans cet état tant qu'il n'a pas rendu son verdict (utile quand les mécaniciens sont débordés : le véhicule reste immobilisé et visible dans la file, sans bloquer personne).</li>
       <li><b>Diagnostic confirmé</b> — le mécanicien a précisé les réparations à effectuer ; un bouton "Créer le devis" ouvre directement le formulaire de devis pour ce véhicule.</li>
     </ol>
     <p>Si un mécanicien est disponible immédiatement, les étapes 2 et 3 peuvent se faire en une fois (le formulaire d'assignation accepte de saisir le diagnostic tout de suite).</p>
-    <p>Depuis la fiche d'un véhicule immobilisé, le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le constat, à compléter avec les références de pièces nécessaires.</p>
+    <p>Depuis la fiche d'un véhicule "Inactif", le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le constat, à compléter avec les références de pièces nécessaires.</p>
     <p><b>Import CSV :</b> le bouton "Importer CSV" propose un modèle avec les colonnes attendues (immatriculation, marque, modèle, groupe, type, contrat, chauffeur, téléphone, statut). Les en-têtes sont reconnus même avec des variantes d'accents ou de casse.</p>
     <p><b>+ Nouveau véhicule</b> ouvre un formulaire volontairement différent de "Modifier" : juste l'identité du véhicule (immatriculation, marque, modèle, groupe, type, contrat, chauffeur) — un véhicule qui rejoint la flotte n'est pas forcément en panne, il est donc toujours créé "Actif", sans les champs de statut/immobilisation/sinistre qui n'ont de sens que pour un véhicule déjà existant.</p>
   `},
@@ -5108,6 +5177,7 @@ async function enterApp(authUser){
   renderNav();
   await renderView();
   refreshNavBadges();
+  escaladerEntreesEnInactif();
 }
 function renderLoginScreen(message){
   const screen = document.getElementById("loginScreen");
