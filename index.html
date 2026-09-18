@@ -3634,8 +3634,15 @@ function couleurModele(nom){
 }
 function iconeVehiculeSouhaite(demande, modeles){
   const label = libelleVehicule(demande);
+  /* La couleur doit distinguer les véhicules entre eux, pas seulement les
+     modèles reconnus du catalogue — sinon toute demande sans modeleId lié
+     (texte libre, import pas encore rattaché) retombe sur "Non déterminé"
+     et tous ses icônes deviennent gris, ce qui donnait l'impression que la
+     couleur ne variait jamais. On ne garde le gris que pour l'absence
+     totale de nom exploitable. */
   const type = typeVehiculeCatalogue(demande, modeles);
-  const couleur = type==="Non déterminé" ? "var(--ink-faint)" : couleurModele(type);
+  const cleCouleur = type!=="Non déterminé" ? type : (demande.modeleNom||"");
+  const couleur = cleCouleur ? couleurModele(cleCouleur) : "var(--ink-faint)";
   return '<span title="'+esc(label)+'" style="display:inline-flex;vertical-align:middle;color:'+couleur+';margin-right:3px;">'+
     svgIco('<path d="M4 13.5 5 9.6a1.6 1.6 0 0 1 1.55-1.2h6.9A1.6 1.6 0 0 1 15 9.6l1 3.9"/><rect x="2.8" y="13.5" width="14.4" height="2.6" rx="1.2"/><circle cx="6.3" cy="16.6" r="1.3"/><circle cx="13.7" cy="16.6" r="1.3"/>')+
   "</span>";
