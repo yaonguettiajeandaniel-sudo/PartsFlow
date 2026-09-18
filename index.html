@@ -609,7 +609,7 @@ const state = {
   ready: false,
   actingUser: null,
   utilisateurs: [],
-  config: { devise: "FCFA", entreprise: "", capaciteAtelier: 5 },
+  config: { devise: "FCFA", entreprise: "", capaciteAtelier: 5, heureOuverture: "08:00", toleranceRetardMin: 15 },
   view: { name: "dashboard", params: {} },
   navBadges: {},
 };
@@ -3190,7 +3190,7 @@ VIEWS.triage = async function(view){
 VIEWS.techniciens = async function(view){
   const [techniciens, ordresPourCharge] = await Promise.all([getAll("techniciens"), getAll("ordres")]);
   view.innerHTML =
-    '<div class="tabs"><button class="active" data-tab="liste">Techniciens</button><button data-tab="synthese">Synthèse mensuelle</button></div>'+
+    '<div class="tabs"><button class="active" data-tab="liste">Techniciens</button><button data-tab="synthese">Synthèse mensuelle</button><button data-tab="pointage">Pointage</button></div>'+
     '<div id="tabBody"></div>';
   function drawListe(){
     document.getElementById("tabBody").innerHTML =
@@ -3273,12 +3273,81 @@ VIEWS.techniciens = async function(view){
     renderMonth(monthDefault);
     document.getElementById("monthPick").addEventListener("change", e=>renderMonth(e.target.value));
   }
+  async function drawPointage(){
+    const pointages = await getAll("pointages");
+    const techActifs = techniciens.filter(t=>(t.statut||"actif")==="actif");
+    const todayIsoDate = todayIso().slice(0,10);
+    const monthDefault = todayIso().slice(0,7);
+    const tolerance = state.config.toleranceRetardMin!=null ? state.config.toleranceRetardMin : 15;
+
+    document.getElementById("tabBody").innerHTML =
+      '<div class="view-head"><div><p class="lede">Pointage de l\'arrivée des techniciens — heure d\'ouverture '+esc(state.config.heureOuverture||"08:00")+', tolérance '+tolerance+' min (réglable dans <a href="#" id="goParams">Paramètres</a>).</p></div></div>'+
+      '<h3 class="section-title">Aujourd\'hui — '+fmtDate(todayIso())+'</h3>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Métier</th><th>Arrivée</th><th></th></tr></thead><tbody id="pointageTbody"></tbody></table></div>'+
+      '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Retards du mois</h3><input type="month" id="pointageMonth" value="'+monthDefault+'"></div>'+
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Technicien</th><th class="num">Jours pointés</th><th class="num">Retards</th></tr></thead><tbody id="retardsTbody"></tbody></table></div>';
+
+    const goParams = document.getElementById("goParams");
+    if(goParams) goParams.addEventListener("click", (e)=>{ e.preventDefault(); setView("parametres"); });
+
+    function drawAujourdhui(){
+      document.getElementById("pointageTbody").innerHTML = techActifs.length ? techActifs.map(t=>{
+        const p = pointages.find(x=>x.technicienId===t.id && (x.date||"").slice(0,10)===todayIsoDate);
+        return '<tr><td>'+esc(t.nom)+'</td><td>'+esc(METIERS[t.metier]||t.metier)+'</td>'+
+          '<td>'+(p ? fmtDateTime(p.heureArrivee)+(p.enRetard?' <span class="pill rejete">En retard</span>':' <span class="pill attribue">À l\'heure</span>') : '<span class="faint">Non pointé</span>')+'</td>'+
+          '<td class="row-actions">'+(p ? (isAdmin()?'<button class="btn small danger" data-suppr-pointage="'+p.id+'">Supprimer</button>':"") : '<button class="btn small primary" data-pointer="'+t.id+'">Marquer l\'arrivée</button>')+'</td>'+
+        "</tr>";
+      }).join("") : '<tr class="empty-row"><td colspan="4">Aucun technicien actif.</td></tr>';
+      document.querySelectorAll("[data-pointer]").forEach(b=>b.addEventListener("click", async ()=>{
+        const techId = b.getAttribute("data-pointer");
+        const tech = techActifs.find(t=>t.id===techId);
+        const maintenant = new Date();
+        const [hO,mO] = (state.config.heureOuverture||"08:00").split(":").map(Number);
+        const seuil = new Date(maintenant); seuil.setHours(hO, (mO||0)+tolerance, 0, 0);
+        const enRetard = maintenant > seuil;
+        await state.db.collection("pointages").add({
+          technicienId: techId, date: todayIsoDate, heureArrivee: maintenant.toISOString(),
+          enRetard, marquePar: actingUserName(), createdAt: todayIso(),
+        });
+        await logAudit("Pointage arrivée", tech.nom, enRetard?"En retard":"À l'heure");
+        toast("Arrivée de "+tech.nom+" enregistrée."+(enRetard?" (en retard)":"")); setView("techniciens");
+      }));
+      document.querySelectorAll("[data-suppr-pointage]").forEach(b=>b.addEventListener("click", async ()=>{
+        const ok = await askConfirm("Supprimer ce pointage ?", "Supprimer");
+        if(!ok) return;
+        try{
+          await state.db.doc("pointages/"+b.getAttribute("data-suppr-pointage")).delete();
+          await logAudit("Suppression pointage", "", "");
+          toast("Pointage supprimé."); setView("techniciens");
+        }catch(e){ toast("Erreur : "+describeError(e), "danger"); }
+      }));
+    }
+    drawAujourdhui();
+
+    function drawRetards(month){
+      const [y,m] = month.split("-").map(Number);
+      const parTech = {};
+      pointages.filter(p=>{ const d=new Date(p.date); return d.getFullYear()===y && (d.getMonth()+1)===m; }).forEach(p=>{
+        const key = p.technicienId;
+        if(!parTech[key]) parTech[key] = { jours:0, retards:0 };
+        parTech[key].jours++;
+        if(p.enRetard) parTech[key].retards++;
+      });
+      const rows = Object.entries(parTech).map(([techId, s])=>({ nom: (techniciens.find(x=>x.id===techId)||{}).nom||"?", ...s })).sort((a,b)=>b.retards-a.retards);
+      document.getElementById("retardsTbody").innerHTML = rows.length ? rows.map(r=>
+        '<tr><td>'+esc(r.nom)+'</td><td class="num mono">'+r.jours+'</td><td class="num mono">'+(r.retards>0?'<span class="pill rejete">'+r.retards+'</span>':'0')+"</td></tr>"
+      ).join("") : '<tr class="empty-row"><td colspan="3">Aucun pointage ce mois-ci.</td></tr>';
+    }
+    drawRetards(monthDefault);
+    document.getElementById("pointageMonth").addEventListener("change", e=>drawRetards(e.target.value));
+  }
   drawListe();
   view.querySelectorAll(".tabs button").forEach(b=>{
     b.addEventListener("click", ()=>{
       view.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
-      if(b.getAttribute("data-tab")==="liste") drawListe(); else drawSynthese();
+      const tab = b.getAttribute("data-tab");
+      if(tab==="liste") drawListe(); else if(tab==="synthese") drawSynthese(); else drawPointage();
     });
   });
 };
@@ -4290,6 +4359,10 @@ VIEWS.parametres = async function(view){
         '<div class="field"><label>Devise</label><input id="f_devise" value="'+esc(state.config.devise)+'"></div>'+
         '<div class="field"><label>Capacité atelier (OR simultanés)</label><input id="f_capacite" type="number" min="1" value="'+esc(state.config.capaciteAtelier||5)+'"></div>'+
       '</div>'+
+      '<div class="field-row" style="grid-template-columns:1fr 1fr;">'+
+        '<div class="field"><label>Heure d\'ouverture (pointage)</label><input id="f_heureOuverture" type="time" value="'+esc(state.config.heureOuverture||"08:00")+'"></div>'+
+        '<div class="field"><label>Tolérance de retard (minutes)</label><input id="f_tolerance" type="number" min="0" value="'+esc(state.config.toleranceRetardMin!=null?state.config.toleranceRetardMin:15)+'"></div>'+
+      '</div>'+
       '<button class="btn" id="saveDevise">Enregistrer</button>'+
     '</div>'+
     '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Comptes ('+utilisateurs.length+')</h3><button class="btn primary" id="newUser">+ Utilisateur</button></div>'+
@@ -4323,8 +4396,11 @@ VIEWS.parametres = async function(view){
     const devise = document.getElementById("f_devise").value.trim() || "FCFA";
     const entreprise = document.getElementById("f_entreprise").value.trim();
     const capaciteAtelier = Number(document.getElementById("f_capacite").value)||5;
-    await state.db.doc("config/general").set({ devise, entreprise, capaciteAtelier });
+    const heureOuverture = document.getElementById("f_heureOuverture").value || "08:00";
+    const toleranceRetardMin = Number(document.getElementById("f_tolerance").value)||0;
+    await state.db.doc("config/general").set({ devise, entreprise, capaciteAtelier, heureOuverture, toleranceRetardMin });
     state.config.devise = devise; state.config.entreprise = entreprise; state.config.capaciteAtelier = capaciteAtelier;
+    state.config.heureOuverture = heureOuverture; state.config.toleranceRetardMin = toleranceRetardMin;
     toast("Paramètres enregistrés."); renderView();
   });
   document.getElementById("resetAll").addEventListener("click", ()=> openResetConfirm());
@@ -4450,6 +4526,7 @@ const MANUEL_SECTIONS = [
     </ul>
     <p><b>Profil d'un technicien :</b> cliquer sur son nom dans la liste ouvre sa fiche complète — les OR dont il est <b>responsable</b> (assignés dès l'envoi du devis à l'atelier ou à l'ouverture d'un OR, voir <a href="#m-atelier">Atelier</a>), en cours et clôturés, ainsi que l'historique de ses interventions facturées. Pas besoin d'un compte de connexion séparé : n'importe qui ayant accès à cet onglet peut consulter "ce qui est arrivé chez untel".</p>
     <p>La <b>synthèse mensuelle</b> (deuxième onglet de cette page) additionne, par technicien, tous les montants de main d'œuvre du mois choisi — ordres de réparation et factures directes confondus — pour préparer la paie. Export CSV disponible.</p>
+    <p><b>Pointage</b> (troisième onglet) — un agent dédié pointe l'arrivée de chaque technicien actif d'un clic sur "Marquer l'arrivée" : l'heure est enregistrée automatiquement (pas de saisie manuelle possible), et comparée à l'heure d'ouverture et à la tolérance réglées dans <a href="#m-parametres">Paramètres</a> pour marquer "En retard" ou "À l'heure". Un technicien déjà pointé pour le jour ne peut pas être pointé une seconde fois (un administrateur peut supprimer un pointage erroné). Le tableau "Retards du mois", en dessous, compte pour chaque technicien ses jours pointés et ses retards sur le mois choisi — le point mensuel à partir duquel décider d'une sanction (via le statut Suspendu/Licencié de sa fiche, ci-dessus).</p>
   `},
   { id:"comptage", title:"Comptage de stock", html:`
     <p>Comptage tournant : on saisit la quantité physiquement trouvée pour chaque référence, l'écart avec le stock théorique est mis en évidence. Aucun ajustement n'est appliqué au stock tant que le comptage n'est pas validé, et seul un administrateur peut valider un comptage présentant des écarts.</p>
@@ -4490,7 +4567,7 @@ const MANUEL_SECTIONS = [
   -H "Content-Type: application/json" \
   -d '{"password": "NouveauMotDePasse"}'</div>
     <p>Une réponse JSON avec les informations du compte (pas de champ d'erreur) confirme que le mot de passe a changé. Communiquer le nouveau mot de passe à la personne concernée par un canal sûr, jamais par écrit dans un endroit partagé.</p>
-    <p><b>Général :</b> nom de l'entreprise (affiché en en-tête des documents imprimés), devise, et capacité de l'atelier (nombre d'ordres de réparation ouverts en parallèle) utilisée par l'onglet Prise en charge.</p>
+    <p><b>Général :</b> nom de l'entreprise (affiché en en-tête des documents imprimés), devise, capacité de l'atelier (nombre d'ordres de réparation ouverts en parallèle) utilisée par l'onglet Prise en charge, et heure d'ouverture + tolérance de retard utilisées par le <a href="#m-techniciens">pointage</a> des techniciens.</p>
     <p><b>Zone dangereuse :</b> le bouton "Réinitialiser l'application" vide véhicules, stock, fournisseurs, achats, devis, factures, ordres de réparation, mouvements de stock, comptages et journal, et remet les numéros de documents à 1. Les comptes utilisateurs, les fiches techniciens et les paramètres généraux ne sont pas touchés. Cette action est irréversible : il faut taper le mot <span class="mono">REINITIALISER</span> dans la fenêtre de confirmation pour l'activer, afin d'éviter tout clic accidentel.</p>
   `},
 ];
@@ -4720,6 +4797,8 @@ async function init(){
     if(cfg && cfg.devise) state.config.devise = cfg.devise;
     if(cfg && cfg.entreprise) state.config.entreprise = cfg.entreprise;
     if(cfg && cfg.capaciteAtelier!=null) state.config.capaciteAtelier = cfg.capaciteAtelier;
+    if(cfg && cfg.heureOuverture) state.config.heureOuverture = cfg.heureOuverture;
+    if(cfg && cfg.toleranceRetardMin!=null) state.config.toleranceRetardMin = cfg.toleranceRetardMin;
   }catch(e){ /* config falls back to defaults, non-blocking */ }
 
   const { data: { session } } = await sb.auth.getSession();
