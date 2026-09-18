@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <style>
   :root{
     --ground:#F2F3F5;
@@ -2392,13 +2393,18 @@ async function openCommandeDetail(id){
     (c.note ? '<p class="faint" style="margin-top:-6px;">'+esc(c.note)+"</p>" : "")+
     '<table class="lines-table"><thead><tr><th>Référence</th><th>Commandé</th><th>Reçu</th><th>P.U.</th></tr></thead><tbody>'+lignesHtml+"</tbody></table>"+
     (c.statut!=="soldee" ? '<div class="callout"><span class="lbl">Réception</span><p>Indiquez la quantité effectivement reçue par ligne, puis validez : le stock et le coût moyen sont mis à jour automatiquement.</p></div>' : "");
-  const footHtml = c.statut!=="soldee"
-    ? '<button class="btn ghost" id="cl">Fermer</button><button class="btn primary" id="receive">Valider la réception</button>'
-    : '<button class="btn" id="cl">Fermer</button>';
+  const aDesArticlesRecus = (c.lignes||[]).some(l=>(l.qteRecue||0)>0);
+  const footHtml =
+    (aDesArticlesRecus ? '<button class="btn" id="codesBarres">Codes-barres</button>' : "")+
+    (c.statut!=="soldee"
+      ? '<button class="btn ghost" id="cl">Fermer</button><button class="btn primary" id="receive">Valider la réception</button>'
+      : '<button class="btn" id="cl">Fermer</button>');
   openModal("Commande "+c.numero, body, {
     wide:true, footHtml,
     onMount(back, close){
       back.querySelector("#cl").addEventListener("click", close);
+      const bcBtn = back.querySelector("#codesBarres");
+      if(bcBtn) bcBtn.addEventListener("click", ()=>openCodesBarresCommande(c));
       const btn = back.querySelector("#receive");
       if(btn) btn.addEventListener("click", async ()=>{
         const inputs = back.querySelectorAll("[data-recv]");
@@ -2428,6 +2434,70 @@ async function openCommandeDetail(id){
         await state.db.doc("commandes/"+c.id).update({ lignes, statut });
         await logAudit("Réception commande", c.numero, "");
         close(); toast("Réception enregistrée."); renderView();
+      });
+    }
+  });
+}
+
+/* ---- Codes-barres de réception -------------------------------------------
+   Un code-barres par unité physiquement reçue (pas par ligne) : référence de
+   la pièce (SKU) + n° de commande (les 4 derniers chiffres, ex. "0001") +
+   position de cette unité parmi celles reçues de la même référence sur cette
+   commande, ex. "REF-PLQ-002-0001-1", "-2", "-3"… — déterministe, jamais
+   stocké, recalculé à chaque ouverture à partir de la commande. */
+function genererCodesBarresCommande(c){
+  const seqMatch = (c.numero||"").match(/(\d{4})$/);
+  const seq = seqMatch ? seqMatch[1] : (c.numero||"CMD");
+  const labels = [];
+  (c.lignes||[]).forEach(l=>{
+    const n = Math.floor(Number(l.qteRecue)||0);
+    for(let i=1;i<=n;i++){
+      labels.push({ code: (l.reference||"REF")+"-"+seq+"-"+i, reference:l.reference, designation:l.designation });
+    }
+  });
+  return labels;
+}
+function openCodesBarresCommande(c){
+  const labels = genererCodesBarresCommande(c);
+  if(!labels.length){ toast("Aucun article reçu sur cette commande pour le moment.", "danger"); return; }
+  const body =
+    '<p class="muted" style="margin-top:0;">Un code-barres par unité reçue — '+labels.length+' au total.</p>'+
+    '<div id="barcodeGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;">'+
+      labels.map((l,i)=>
+        '<div style="border:1px solid var(--line); border-radius:var(--radius); padding:8px; text-align:center;">'+
+          '<svg id="bc'+i+'"></svg>'+
+          '<div class="faint" style="font-size:.72rem; margin-top:2px;">'+esc(l.designation||"")+'</div>'+
+        "</div>"
+      ).join("")+
+    "</div>";
+  openModal("Codes-barres — "+c.numero, body, {
+    wide:true,
+    footHtml: '<button class="btn ghost" id="cancel">Fermer</button><button class="btn primary" id="printBc">Imprimer</button>',
+    onMount(back, close){
+      back.querySelector("#cancel").addEventListener("click", close);
+      function dessiner(root, prefix){
+        labels.forEach((l,i)=>{
+          try{ JsBarcode(root.querySelector("#"+prefix+i), l.code, { format:"CODE128", width:1.6, height:42, fontSize:11, margin:4 }); }
+          catch(e){ /* référence vide ou caractère non encodable — la vignette reste vide plutôt que de bloquer les autres */ }
+        });
+      }
+      dessiner(back, "bc");
+      back.querySelector("#printBc").addEventListener("click", ()=>{
+        // Réutilise le mécanisme d'impression existant (#printArea, voir
+        // printDocument) plutôt que window.print() direct sur la modale,
+        // pour ne pas imprimer aussi le reste de l'interface autour.
+        const printArea = document.getElementById("printArea");
+        printArea.innerHTML =
+          '<div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;">'+
+            labels.map((l,i)=>
+              '<div style="border:1px solid #ccc; border-radius:6px; padding:8px; text-align:center;">'+
+                '<svg id="pbc'+i+'"></svg>'+
+                '<div style="font-size:11px; margin-top:2px;">'+esc(l.designation||"")+'</div>'+
+              "</div>"
+            ).join("")+
+          "</div>";
+        dessiner(printArea, "pbc");
+        setTimeout(()=> window.print(), 50);
       });
     }
   });
@@ -4758,6 +4828,7 @@ const MANUEL_SECTIONS = [
     <p>La liste des fournisseurs (nom, téléphone, délai de livraison habituel) et les commandes passées auprès d'eux.</p>
     <p>Une nouvelle commande liste les pièces commandées, quantité et prix unitaire. À la réception, on saisit la quantité réellement reçue par ligne : le stock est augmenté d'autant et le coût moyen d'achat de l'article est recalculé automatiquement.</p>
     <p>Une commande peut être marquée <b>urgente</b> (badge rouge, remontée en tête de liste) — c'est automatique lorsqu'elle est créée depuis la fiche d'un véhicule immobilisé ou depuis l'onglet <a href="#m-triage">Diagnostic</a>, mais la case peut aussi être cochée manuellement.</p>
+    <p><b>Codes-barres de réception</b> — dès qu'au moins un article a été reçu sur la commande, un bouton "Codes-barres" apparaît sur sa fiche : il génère un code-barres par unité effectivement reçue (pas par ligne), au format <span class="mono">RÉFÉRENCE-NNNN-N</span> (référence de la pièce, les 4 derniers chiffres du numéro de commande, puis le rang de cette unité parmi celles reçues pour la même référence — ex. <span class="mono">REF-PLQ-002-0001-1</span>, <span class="mono">-2</span>, <span class="mono">-3</span>…). Rien n'est enregistré en base : les codes sont recalculés à chaque ouverture à partir de la commande. Le bouton "Imprimer" envoie la planche d'étiquettes à l'imprimante.</p>
   `},
   { id:"devis", title:"Devis", html:`
     <p>Un devis regroupe les pièces et prestations de main d'œuvre proposées pour un véhicule, avec une durée estimée de réparation en jours.</p>
