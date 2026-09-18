@@ -1395,6 +1395,43 @@ VIEWS.dashboard = async function(view){
     .map(([vid, du])=>({ vehicule: vehicules.find(v=>v.id===vid), du }))
     .filter(r=>r.vehicule);
 
+  /* ---- Contrôle & surveillance (anti-vol), réservé aux administrateurs --
+     Deux signaux, tous deux sans accès direct à la base — calculés depuis
+     les données déjà chargées (ordres, pieces posées) :
+     1) pièces sorties du stock sur un OR resté ouvert trop longtemps —
+        normal en cours de réparation, à surveiller si ça traîne (l'argent
+        correspondant n'a pas encore été facturé).
+     2) techniciens dont la valeur de pièces posées par OR clôturé s'écarte
+        fortement de la moyenne des autres, sur une fenêtre récente. */
+  const SEUIL_JOURS_OR_OUVERT = 14;
+  const FENETRE_JOURS_TECHNICIENS = 90;
+  const SEUIL_ANOMALIE_TECHNICIEN = 1.5;
+  let orAncienOuverts = [], techsAVerifier = [], moyenneGlobaleTech = 0;
+  if(isAdmin()){
+    const maintenant = Date.now();
+    orAncienOuverts = ordres.filter(o=>o.statut==="ouvert" && (o.pieces||[]).length>0)
+      .map(o=>({
+        ordre: o,
+        valeur: (o.pieces||[]).reduce((s,p)=>s+(p.quantite*p.prixUnitaire),0),
+        jours: Math.floor((maintenant-new Date(o.dateOuverture).getTime())/86400000),
+      }))
+      .filter(x=>x.jours>=SEUIL_JOURS_OR_OUVERT)
+      .sort((a,b)=>b.valeur-a.valeur);
+
+    const depuis = new Date(maintenant - FENETRE_JOURS_TECHNICIENS*86400000);
+    const parTech = {};
+    ordres.filter(o=>o.statut==="cloture" && o.dateCloture && new Date(o.dateCloture)>=depuis && o.technicienResponsableId).forEach(o=>{
+      const valeur = (o.pieces||[]).reduce((s,p)=>s+(p.quantite*p.prixUnitaire),0);
+      const key = o.technicienResponsableId;
+      if(!parTech[key]) parTech[key] = { nom:o.technicienResponsableNom, nbOR:0, valeur:0 };
+      parTech[key].nbOR++; parTech[key].valeur += valeur;
+    });
+    const techStats = Object.values(parTech).map(t=>({ ...t, ratio: t.nbOR>0 ? t.valeur/t.nbOR : 0 }));
+    const techsEligibles = techStats.filter(t=>t.nbOR>=2);
+    moyenneGlobaleTech = techsEligibles.length ? techsEligibles.reduce((s,t)=>s+t.ratio,0)/techsEligibles.length : 0;
+    techsAVerifier = techsEligibles.filter(t=>moyenneGlobaleTech>0 && t.ratio > moyenneGlobaleTech*SEUIL_ANOMALIE_TECHNICIEN).sort((a,b)=>b.ratio-a.ratio);
+  }
+
   view.innerHTML =
     '<div class="view-head"><div><p class="lede">Vue d\'ensemble de la flotte, du stock et des impayés — cliquez un chiffre pour voir le détail.</p></div></div>'+
     '<div class="kpi-grid">'+
@@ -1432,13 +1469,38 @@ VIEWS.dashboard = async function(view){
         "</tbody></table></div>"+
         (sousSeuil.length>5 ? '<button class="btn small ghost" id="toggleSousSeuil">Afficher '+(sousSeuil.length-5)+' de plus</button>' : "")+
       "</div>"+
-    "</div>";
+    "</div>"+
+    (isAdmin() ?
+      '<h3 class="section-title">Contrôle &amp; surveillance (pièces)</h3>'+
+      '<div class="detail-grid">'+
+        '<div>'+
+          '<p class="lede" style="margin-top:0;">Pièces sorties du stock sur un OR resté ouvert plus de '+SEUIL_JOURS_OR_OUVERT+' jours — normal en cours de réparation, à surveiller si ça traîne (l\'argent correspondant n\'est pas encore facturé).</p>'+
+          '<div class="table-wrap"><table class="grid"><thead><tr><th>OR</th><th>Véhicule</th><th class="num">Depuis</th><th class="num">Valeur pièces</th></tr></thead><tbody>'+
+            (orAncienOuverts.length ? orAncienOuverts.slice(0,10).map(x=>{
+              const veh = vehicules.find(v=>v.id===x.ordre.vehiculeId);
+              return '<tr class="clickable" data-or="'+x.ordre.id+'"><td class="mono">'+esc(x.ordre.numero)+'</td><td>'+esc(veh?veh.immatriculation:"—")+'</td><td class="num mono">'+x.jours+' j</td><td class="num mono">'+fmtMoney(x.valeur)+"</td></tr>";
+            }).join("") : '<tr class="empty-row"><td colspan="4">Aucun OR ancien avec pièces en attente.</td></tr>')+
+          "</tbody></table></div>"+
+        "</div>"+
+        '<div>'+
+          '<p class="lede" style="margin-top:0;">Techniciens dont la valeur de pièces posées par OR clôturé dépasse largement la moyenne des autres, sur les '+FENETRE_JOURS_TECHNICIENS+' derniers jours — à vérifier, pas une accusation en soi.</p>'+
+          '<div class="table-wrap"><table class="grid"><thead><tr><th>Technicien</th><th class="num">OR clôturés</th><th class="num">Valeur pièces / OR</th></tr></thead><tbody>'+
+            (techsAVerifier.length ? techsAVerifier.map(t=>
+              '<tr><td>'+esc(t.nom||"—")+'</td><td class="num mono">'+t.nbOR+'</td><td class="num mono">'+fmtMoney(t.ratio)+' <span class="faint">(moy. '+fmtMoney(moyenneGlobaleTech)+')</span></td></tr>'
+            ).join("") : '<tr class="empty-row"><td colspan="3">Aucun écart notable sur la période.</td></tr>')+
+          "</tbody></table></div>"+
+        "</div>"+
+      "</div>"
+    : "");
 
   view.querySelectorAll("[data-veh]").forEach(tr=>{
     tr.addEventListener("click", ()=> setView("vehicule-detail", { id: tr.getAttribute("data-veh") }));
   });
   view.querySelectorAll("[data-art]").forEach(tr=>{
     tr.addEventListener("click", ()=> setView("stock", { filter:"sousSeuil" }));
+  });
+  view.querySelectorAll("[data-or]").forEach(tr=>{
+    tr.addEventListener("click", ()=> setView("atelier-detail", { id: tr.getAttribute("data-or") }));
   });
   function wireToggle(btnId, groupKey, totalExtra){
     const btn = view.querySelector("#"+btnId);
@@ -4296,6 +4358,11 @@ const MANUEL_SECTIONS = [
       <li><b>Sinistrés</b> : véhicules accidentés pris en charge par l'assurance dans un autre garage — comptés à part, ils ne pèsent pas sur les indicateurs d'immobilisation ci-dessus (voir <a href="#m-vehicules">Véhicules</a>).</li>
     </ul>
     <p>En bas : les véhicules avec le plus d'impayés, et les références sous seuil à réapprovisionner en priorité.</p>
+    <p><b>Contrôle &amp; surveillance (pièces)</b> — réservé aux administrateurs, deux signaux anti-vol en complément de l'<a href="#m-atelier">échange standard</a> :</p>
+    <ul>
+      <li><b>Pièces sorties non facturées</b> : les OR encore ouverts depuis plus de 14 jours et sur lesquels des pièces ont déjà été posées, avec la valeur correspondante — normal si la réparation est en cours, à surveiller si ça traîne, puisque l'argent n'est pas encore facturé tant que l'OR n'est pas clôturé.</li>
+      <li><b>Techniciens à vérifier</b> : sur les 90 derniers jours, la valeur de pièces posées par OR clôturé, par technicien responsable — un technicien dont ce ratio dépasse largement (×1,5) la moyenne des autres est listé. Ce n'est pas une accusation, juste un signal à recouper (type de réparations confiées, ancienneté, etc.).</li>
+    </ul>
   `},
   { id:"vehicules", title:"Véhicules", html:`
     <p>Trois vues, en onglets en haut de la page :</p>
