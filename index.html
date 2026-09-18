@@ -3684,7 +3684,7 @@ VIEWS.clients = async function(view, params){
         const demandesClient = demandes.filter(d=>d.clientId===c.id);
         const icones = demandesClient.map(d=>iconeVehiculeSouhaite(d, modeles)).join("");
         return '<tr class="clickable" data-id="'+c.id+'">'+
-          '<td>'+icones+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
+          '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+' '+icones+'</td>'+
           '<td>'+esc(c.telephone||"—")+'</td>'+
         "</tr>";
       }).join("") : '<tr class="empty-row"><td colspan="2">Aucun client ne correspond.</td></tr>';
@@ -4576,7 +4576,7 @@ const MANUEL_SECTIONS = [
   { id:"clients", title:"Clients", html:`
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution des véhicules :</p>
     <ul>
-      <li><b>Onglet "Tous"</b> — simple annuaire des clients (nom, téléphone), sans progression ni statut : cliquer un client ouvre sa fiche, où se trouve tout le suivi (virements, attribution). Une petite icône voiture devant le nom de chaque client signale ses véhicules souhaités — une icône par véhicule, colorée selon le modèle (le nom exact apparaît en survolant l'icône). Le suivi financier et l'attribution se consultent dans les onglets "En attente d'attribution" et "Par véhicule souhaité", ou directement sur la fiche du client.</li>
+      <li><b>Onglet "Tous"</b> — simple annuaire des clients (nom, téléphone), sans progression ni statut : cliquer un client ouvre sa fiche, où se trouve tout le suivi (virements, attribution). Une petite icône voiture après le nom de chaque client signale ses véhicules souhaités — une icône par véhicule, colorée selon le modèle (le nom exact apparaît en survolant l'icône). Le suivi financier et l'attribution se consultent dans les onglets "En attente d'attribution" et "Par véhicule souhaité", ou directement sur la fiche du client.</li>
       <li><b>Fiche client</b> — coordonnées, offre actuelle et migration souhaitée. Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant(s) atteint(s) → véhicule(s) attribué(s)) montre en un coup d'œil où en est le dossier.</li>
       <li><b>Véhicules souhaités</b> — un client peut souhaiter plusieurs véhicules, éventuellement de modèles différents (ex. deux Kaiyi E5, ou un Kaiyi E5 et un Suzuki Dzire) : chacun s'ajoute comme une ligne séparée sur sa fiche, avec son propre coût. Ses virements validés remplissent ses véhicules souhaités <b>dans l'ordre où ils ont été ajoutés</b> — le premier ajouté se remplit en premier, le surplus va au suivant, etc.</li>
       <li><b>Véhicule partagé (parts 1/2, 1/3…)</b> — pour un client qui n'achète qu'une part d'un véhicule, choisir "1/2" ou "1/3" dans le champ "Part" en ajoutant son véhicule souhaité : le coût de sa part se calcule automatiquement (prix catalogue ÷ dénominateur). Lors de l'attribution, un même véhicule de la flotte peut être choisi pour plusieurs clients — le menu signale alors qui le partage déjà et demande confirmation avant d'ajouter un partage de plus (avec une alerte si la somme des parts dépasserait un véhicule entier).</li>
