@@ -1623,7 +1623,7 @@ VIEWS.vehicules = async function(view, params){
   function drawTous(){
     document.getElementById("tabBody").innerHTML =
       '<div class="view-head"><div><p class="lede">Flotte VTC suivie par PartsFlow — '+vehicules.length+' véhicule(s) enregistré(s).</p></div>'+
-        '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn" id="newVehicule">+ Nouveau véhicule</button><button class="btn primary" id="newReception">+ Signaler un problème</button></div></div>'+
+        '<div class="row-actions"><button class="btn" id="exportVeh">Exporter en CSV</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn" id="newVehicule">+ Nouveau véhicule</button><button class="btn primary" id="newReception">+ Signaler un problème</button></div></div>'+
       '<div class="toolbar"><input type="search" id="vehSearch" placeholder="Rechercher par immatriculation, chauffeur, marque, groupe…"></div>'+
       '<div class="table-wrap"><table class="grid"><thead><tr>'+
         '<th>Immatriculation</th><th>Véhicule</th><th>Chauffeur</th><th>Groupe</th><th>Type</th><th>Contrat</th><th>Statut</th>'+
@@ -1654,6 +1654,14 @@ VIEWS.vehicules = async function(view, params){
     document.getElementById("newVehicule").addEventListener("click", ()=> openNouveauVehiculeForm());
     document.getElementById("importCsv").addEventListener("click", ()=> openCsvImport("vehicules"));
     document.getElementById("newReception").addEventListener("click", ()=> openReceptionForm(vehicules));
+    document.getElementById("exportVeh").addEventListener("click", ()=>{
+      let csv = "Immatriculation;Marque;Modele;Chauffeur;Groupe;Type;Contrat;Statut\n";
+      vehicules.forEach(v=>{
+        csv += [v.immatriculation,v.marque,v.modele,v.chauffeurNom||"",v.groupe||"",v.type||"",v.contrat||"",PILL_LABELS[v.statut]||v.statut||""].map(x=>String(x||"").replace(/;/g,",")).join(";")+"\n";
+      });
+      downloadFile("vehicules.csv", csv);
+      toast("Export téléchargé.");
+    });
   }
 
   async function drawEnCours(){
@@ -2197,13 +2205,14 @@ VIEWS.stock = async function(view, params){
 
   view.innerHTML =
     '<div class="view-head"><div><p class="lede">Référentiel des pièces et niveaux de stock — '+articles.length+' référence(s).</p></div>'+
-      '<div class="row-actions"><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newArticle">+ Nouvel article</button></div></div>'+
+      '<div class="row-actions"><button class="btn" id="exportArt">Exporter en CSV</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newArticle">+ Nouvel article</button></div></div>'+
     '<div class="toolbar"><input type="search" id="artSearch" placeholder="Rechercher une référence, désignation, famille…">'+
       '<label class="checkbox-row" style="margin:0;"><input type="checkbox" id="onlyLow"> Sous seuil uniquement</label></div>'+
     '<div class="table-wrap"><table class="grid"><thead><tr>'+
       '<th>Référence</th><th>Désignation</th><th>Famille</th><th class="num">Stock</th><th class="num">Seuil</th><th class="num">Prix vente</th><th></th>'+
     "</tr></thead><tbody id=\"artTbody\"></tbody></table></div>";
 
+  let visibleArticles = articles;
   function draw(){
     const f = document.getElementById("artSearch").value.toLowerCase();
     const onlyLow = document.getElementById("onlyLow").checked;
@@ -2212,6 +2221,7 @@ VIEWS.stock = async function(view, params){
       const lowOk = !onlyLow || (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0);
       return textOk && lowOk;
     });
+    visibleArticles = rows;
     document.getElementById("artTbody").innerHTML = rows.length ? rows.map(a=>{
       const low = (Number(a.stockQte)||0) <= (Number(a.stockSeuil)||0);
       return '<tr>'+
@@ -2235,6 +2245,14 @@ VIEWS.stock = async function(view, params){
   document.getElementById("onlyLow").addEventListener("change", draw);
   document.getElementById("newArticle").addEventListener("click", ()=>openArticleForm(null, fournisseurs));
   document.getElementById("importCsv").addEventListener("click", ()=>openCsvImport("articles"));
+  document.getElementById("exportArt").addEventListener("click", ()=>{
+    let csv = "Reference;Designation;Famille;Stock;Seuil;Prix achat;Prix vente\n";
+    visibleArticles.forEach(a=>{
+      csv += [a.reference,a.designation,a.famille||"",a.stockQte||0,a.stockSeuil||0,a.prixAchat||0,a.prixVente||0].map(x=>String(x||"").replace(/;/g,",")).join(";")+"\n";
+    });
+    downloadFile("catalogue-stock.csv", csv);
+    toast("Export téléchargé.");
+  });
 };
 
 function openArticleForm(existing, fournisseurs){
@@ -3532,7 +3550,7 @@ VIEWS.techniciens = async function(view){
       '<div class="view-head"><div><p class="lede">Pointage de l\'arrivée des techniciens — heure d\'ouverture '+esc(state.config.heureOuverture||"08:00")+', tolérance '+tolerance+' min (réglable dans <a href="#" id="goParams">Paramètres</a>).</p></div></div>'+
       '<h3 class="section-title">Aujourd\'hui — '+fmtDate(todayIso())+'</h3>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Nom</th><th>Métier</th><th>Arrivée</th><th></th></tr></thead><tbody id="pointageTbody"></tbody></table></div>'+
-      '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Retards du mois</h3><input type="month" id="pointageMonth" value="'+monthDefault+'"></div>'+
+      '<div class="view-head" style="margin-top:8px;"><h3 class="section-title" style="margin:0;">Retards du mois</h3><div class="row-actions"><input type="month" id="pointageMonth" value="'+monthDefault+'"><button class="btn small" id="exportRetards">Exporter en CSV</button></div></div>'+
       '<div class="table-wrap"><table class="grid"><thead><tr><th>Technicien</th><th class="num">Jours pointés</th><th class="num">Retards</th></tr></thead><tbody id="retardsTbody"></tbody></table></div>';
 
     const goParams = document.getElementById("goParams");
@@ -3572,7 +3590,9 @@ VIEWS.techniciens = async function(view){
     }
     drawAujourdhui();
 
+    let retardsRows = [], retardsMonth = monthDefault;
     function drawRetards(month){
+      retardsMonth = month;
       const [y,m] = month.split("-").map(Number);
       const parTech = {};
       pointages.filter(p=>{ const d=new Date(p.date); return d.getFullYear()===y && (d.getMonth()+1)===m; }).forEach(p=>{
@@ -3582,6 +3602,7 @@ VIEWS.techniciens = async function(view){
         if(p.enRetard){ parTech[key].retards++; parTech[key].datesRetard.push(p.date); }
       });
       const rows = Object.entries(parTech).map(([techId, s])=>({ nom: (techniciens.find(x=>x.id===techId)||{}).nom||"?", ...s })).sort((a,b)=>b.retards-a.retards);
+      retardsRows = rows;
       document.getElementById("retardsTbody").innerHTML = rows.length ? rows.map((r,i)=>
         '<tr class="'+(r.retards>0?"clickable":"")+'" '+(r.retards>0?'data-toggle-retard="'+i+'"':"")+'><td>'+esc(r.nom)+'</td><td class="num mono">'+r.jours+'</td><td class="num mono">'+(r.retards>0?'<span class="pill rejete">'+r.retards+'</span>':'0')+"</td></tr>"+
         (r.retards>0 ? '<tr data-detail-retard="'+i+'" hidden><td colspan="3" style="padding:10px 12px;color:var(--ink-muted);">Retards les : '+r.datesRetard.slice().sort().map(d=>fmtDate(d)).join(", ")+"</td></tr>" : "")
@@ -3593,6 +3614,12 @@ VIEWS.techniciens = async function(view){
     }
     drawRetards(monthDefault);
     document.getElementById("pointageMonth").addEventListener("change", e=>drawRetards(e.target.value));
+    document.getElementById("exportRetards").addEventListener("click", ()=>{
+      let csv = "Technicien;Jours pointes;Retards;Dates de retard\n";
+      retardsRows.forEach(r=>{ csv += [r.nom, r.jours, r.retards, r.datesRetard.slice().sort().map(d=>fmtDate(d)).join(", ")].map(x=>String(x||"").replace(/;/g,",")).join(";")+"\n"; });
+      downloadFile("retards-"+retardsMonth+".csv", csv);
+      toast("Export téléchargé.");
+    });
   }
   drawListe();
   view.querySelectorAll(".tabs button").forEach(b=>{
@@ -3746,11 +3773,48 @@ VIEWS.controle = async function(view){
     return !d || (maintenant - new Date(d.date).getTime())/86400000 > SEUIL_JOURS_CONTROLE;
   });
 
+  const APERCU_EN_RETARD = 10;
+
   view.innerHTML =
-    '<div class="view-head"><div><p class="lede">Contrôle hebdomadaire de l\'état des véhicules — propreté, usure, éclairage… pour vérifier que le chauffeur en prend soin.</p></div><button class="btn primary" id="newControle">+ Nouveau contrôle</button></div>'+
-    (enRetard.length ? '<div class="callout amber"><span class="lbl">En retard</span><p>'+enRetard.length+' véhicule(s) sans contrôle depuis plus de '+SEUIL_JOURS_CONTROLE+' jours (ou jamais contrôlés) : '+enRetard.map(v=>esc(v.immatriculation)).join(", ")+'.</p></div>' : "")+
+    '<div class="view-head"><div><p class="lede">Contrôle hebdomadaire de l\'état des véhicules — propreté, usure, éclairage… pour vérifier que le chauffeur en prend soin.</p></div>'+
+      '<div class="row-actions"><button class="btn" id="exportControles">Exporter en CSV</button><button class="btn primary" id="newControle">+ Nouveau contrôle</button></div></div>'+
+    (enRetard.length ? '<div class="callout amber"><span class="lbl">En retard</span>'+
+      '<p>'+enRetard.length+' véhicule(s) sans contrôle depuis plus de '+SEUIL_JOURS_CONTROLE+' jours (ou jamais contrôlés) : '+
+      enRetard.slice(0,APERCU_EN_RETARD).map(v=>esc(v.immatriculation)).join(", ")+
+      (enRetard.length>APERCU_EN_RETARD ? ' et <a href="#" id="toggleEnRetard">'+(enRetard.length-APERCU_EN_RETARD)+' de plus…</a>' : ".")+
+      '</p>'+
+      (enRetard.length>APERCU_EN_RETARD ? '<p id="resteEnRetard" hidden>'+esc(enRetard.slice(APERCU_EN_RETARD).map(v=>v.immatriculation).join(", "))+'.</p>' : "")+
+      '<button class="btn small ghost" id="exportEnRetard" style="margin-top:6px;">Exporter cette liste en CSV</button>'+
+    '</div>' : "")+
     '<div class="toolbar"><input type="search" id="ctrlSearch" placeholder="Rechercher une immatriculation, un chauffeur…"></div>'+
     '<div class="table-wrap"><table class="grid"><thead><tr><th>Véhicule</th><th>Chauffeur</th><th>Dernier contrôle</th><th>Statut</th><th></th></tr></thead><tbody id="ctrlTbody"></tbody></table></div>';
+
+  const toggleEnRetard = document.getElementById("toggleEnRetard");
+  if(toggleEnRetard) toggleEnRetard.addEventListener("click", (e)=>{
+    e.preventDefault();
+    const reste = document.getElementById("resteEnRetard");
+    reste.hidden = !reste.hidden;
+    toggleEnRetard.textContent = reste.hidden ? (enRetard.length-APERCU_EN_RETARD)+" de plus…" : "réduire";
+  });
+  const exportEnRetardBtn = document.getElementById("exportEnRetard");
+  if(exportEnRetardBtn) exportEnRetardBtn.addEventListener("click", ()=>{
+    let csv = "Immatriculation;Chauffeur;Dernier controle\n";
+    enRetard.forEach(v=>{
+      const d = dernierControle[v.id];
+      csv += [v.immatriculation, v.chauffeurNom||"", d?fmtDate(d.date):"Jamais"].join(";")+"\n";
+    });
+    downloadFile("vehicules-en-retard-controle.csv", csv);
+    toast("Export téléchargé.");
+  });
+  document.getElementById("exportControles").addEventListener("click", ()=>{
+    let csv = "Immatriculation;Chauffeur;Dernier controle;Statut;Observations\n";
+    actifs.forEach(v=>{
+      const d = dernierControle[v.id];
+      csv += [v.immatriculation, v.chauffeurNom||"", d?fmtDate(d.date):"Jamais", d?(STATUT_CONTROLE_LABELS[d.statutGlobal]||d.statutGlobal):"", d?(d.observations||"").replace(/;/g,","):""].join(";")+"\n";
+    });
+    downloadFile("controles-vehicules.csv", csv);
+    toast("Export téléchargé.");
+  });
 
   function draw(filter){
     const f = (filter||"").toLowerCase();
@@ -3897,16 +3961,24 @@ VIEWS.journal = async function(view){
     ...audit.map(a=>({ date:a.date, type:a.action, detail:a.cible+(a.detail?" — "+a.detail:""), utilisateur:a.acteur }))
   ].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,300);
   view.innerHTML =
-    '<div class="view-head"><div><p class="lede">Journal d\'audit — traçabilité complète des mouvements de stock et actions sensibles.</p></div></div>'+
+    '<div class="view-head"><div><p class="lede">Journal d\'audit — traçabilité complète des mouvements de stock et actions sensibles.</p></div><button class="btn" id="exportJournal">Exporter en CSV</button></div>'+
     '<div class="toolbar"><input type="search" id="jSearch" placeholder="Rechercher un événement, une référence, un utilisateur…"></div>'+
     '<div class="table-wrap"><table class="grid"><thead><tr><th>Date</th><th>Événement</th><th>Détail</th><th>Utilisateur</th></tr></thead><tbody id="tb"></tbody></table></div>';
+  let visibleRows = events;
   function draw(){
     const t = document.getElementById("jSearch").value.toLowerCase();
     const rows = events.filter(e=>!t || [e.type,e.detail,e.utilisateur].some(x=>(x||"").toLowerCase().includes(t)));
+    visibleRows = rows;
     document.getElementById("tb").innerHTML = rows.length ? rows.map(e=>'<tr><td>'+fmtDateTime(e.date)+'</td><td>'+esc(e.type)+'</td><td>'+esc(e.detail)+'</td><td>'+esc(e.utilisateur)+"</td></tr>").join("") : '<tr class="empty-row"><td colspan="4">Aucun événement ne correspond.</td></tr>';
   }
   draw();
   document.getElementById("jSearch").addEventListener("input", draw);
+  document.getElementById("exportJournal").addEventListener("click", ()=>{
+    let csv = "Date;Evenement;Detail;Utilisateur\n";
+    visibleRows.forEach(e=>{ csv += [fmtDateTime(e.date), e.type, e.detail, e.utilisateur].map(x=>String(x||"").replace(/;/g,",")).join(";")+"\n"; });
+    downloadFile("journal-audit.csv", csv);
+    toast("Export téléchargé.");
+  });
 };
 
 /* ---- Clients (suivi des virements JET_S et attribution de véhicules) -----
@@ -4861,7 +4933,7 @@ const MANUEL_SECTIONS = [
   { id:"vehicules", title:"Véhicules", html:`
     <p>Trois vues, en onglets en haut de la page :</p>
     <ul>
-      <li><b>Tous</b> — la flotte complète, avec recherche par immatriculation, chauffeur, marque, groupe ou type. Cliquer une ligne ouvre la fiche du véhicule (historique des factures et des ordres de réparation, dépenses cumulées).</li>
+      <li><b>Tous</b> — la flotte complète, avec recherche par immatriculation, chauffeur, marque, groupe ou type. Cliquer une ligne ouvre la fiche du véhicule (historique des factures et des ordres de réparation, dépenses cumulées). Le bouton "Exporter en CSV" télécharge la liste complète.</li>
       <li><b>En cours de prise en charge</b> — uniquement les véhicules immobilisés chez nous, du plus ancien au plus récent, avec la date et l'heure d'entrée et leur étape actuelle (voir plus bas). C'est un simple suivi ; pour savoir si le stock et l'atelier permettent de démarrer une réparation maintenant, c'est l'onglet <a href="#m-triage">Diagnostic</a> qu'il faut consulter. Une fois le véhicule réactivé, ce passage est archivé — voir "Historique des passages en atelier" (rétractable) en bas de la fiche du véhicule, avec la durée totale d'immobilisation.</li>
       <li><b>Sinistrés</b> — véhicules accidentés dont l'assurance gère la réparation dans un autre garage. Suivi purement administratif (assureur, garage destinataire, dates) : ces véhicules ne passent ni par le diagnostic, ni par un devis, ni par l'atelier ici, et ne comptent pas dans les indicateurs d'immobilisation du tableau de bord.</li>
     </ul>
@@ -4891,7 +4963,7 @@ const MANUEL_SECTIONS = [
     <p>Référentiel des pièces : référence, désignation, famille, prix d'achat et de vente, quantité en stock, seuil d'alerte, emplacement.</p>
     <p>Une référence sous son seuil est mise en évidence et remonte dans les alertes du tableau de bord. Le stock est modifié automatiquement par trois mécanismes seulement : la réception d'une commande fournisseur, la sortie de pièces sur un devis/OR/facture, et la validation d'un comptage — jamais en modifiant la quantité à la main sur la fiche article, pour garder une traçabilité complète des mouvements.</p>
     <p><b>Pièce à échange standard</b> — une case à cocher sur la fiche d'un article (batteries, alternateurs, compresseurs…) signale que l'ancienne pièce doit être physiquement restituée avant de pouvoir clôturer l'OR sur lequel elle a été posée. Voir <a href="#m-atelier">Atelier</a> pour le contrôle correspondant.</p>
-    <p><b>Import CSV</b> disponible pour charger un catalogue existant.</p>
+    <p><b>Import CSV</b> disponible pour charger un catalogue existant, et <b>Export CSV</b> pour télécharger la liste affichée (respecte la recherche et le filtre "Sous seuil uniquement" en cours).</p>
   `},
   { id:"achats", title:"Achats (fournisseurs et commandes)", html:`
     <p>La liste des fournisseurs (nom, téléphone, délai de livraison habituel) et les commandes passées auprès d'eux.</p>
@@ -4942,7 +5014,7 @@ const MANUEL_SECTIONS = [
   { id:"controle", title:"Contrôle", html:`
     <p>Contrôle hebdomadaire de l'état des véhicules — un moyen de vérifier que le chauffeur en prend soin, indépendamment des pannes mécaniques suivies par ailleurs (Diagnostic, Atelier).</p>
     <p>"+ Nouveau contrôle" ouvre une liste de 12 critères (propreté intérieure/extérieure, état des pneus, niveaux, éclairage, voyants du tableau de bord, carrosserie, documents à bord, ceintures, sièges/tapis, odeurs, kilométrage cohérent), chacun coché "OK" ou "À signaler", plus un statut global (Bon / À surveiller / Problématique) et des observations libres. "Voir" sur une ligne rouvre le détail d'un contrôle déjà fait.</p>
-    <p>Un véhicule sans contrôle depuis plus de 7 jours (ou jamais contrôlé) apparaît dans le bandeau "En retard" en haut de la page, et une pastille rouge sur l'icône du menu compte ces véhicules en retard.</p>
+    <p>Un véhicule sans contrôle depuis plus de 7 jours (ou jamais contrôlé) apparaît dans le bandeau "En retard" en haut de la page, et une pastille rouge sur l'icône du menu compte ces véhicules en retard. Passé 10 immatriculations, le bandeau se replie ("… X de plus") pour rester lisible ; cliquer dessus déplie le reste. Le bouton "Exporter cette liste en CSV" à l'intérieur du bandeau télécharge uniquement les véhicules en retard ; "Exporter en CSV" en haut de la page télécharge tous les véhicules avec leur dernier contrôle.</p>
   `},
   { id:"techniciens", title:"Techniciens", html:`
     <p>Fiche par technicien : nom, métier, téléphone, statut. La colonne <b>En charge</b> compte ses ordres de réparation actuellement ouverts, pour voir en un coup d'œil qui travaille et qui est libre. Rien n'empêche d'assigner 2, 3 ou plus véhicules au même technicien en même temps (utile quand plusieurs pannes légères arrivent d'un coup) : il suffit de le choisir comme <b>responsable</b> sur chacun des OR concernés, chaque fois qu'un devis part à l'atelier ou qu'un OR s'ouvre.</p>
@@ -4953,13 +5025,13 @@ const MANUEL_SECTIONS = [
     </ul>
     <p><b>Profil d'un technicien :</b> cliquer sur son nom dans la liste ouvre sa fiche complète — les OR dont il est <b>responsable</b> (assignés dès l'envoi du devis à l'atelier ou à l'ouverture d'un OR, voir <a href="#m-atelier">Atelier</a>), en cours et clôturés, ainsi que l'historique de ses interventions facturées. Pas besoin d'un compte de connexion séparé : n'importe qui ayant accès à cet onglet peut consulter "ce qui est arrivé chez untel".</p>
     <p>La <b>synthèse mensuelle</b> (deuxième onglet de cette page) additionne, par technicien, tous les montants de main d'œuvre du mois choisi — ordres de réparation et factures directes confondus — pour préparer la paie. Export CSV disponible.</p>
-    <p><b>Pointage</b> (troisième onglet) — un agent dédié pointe l'arrivée de chaque technicien actif d'un clic sur "Marquer l'arrivée" : l'heure est enregistrée automatiquement (pas de saisie manuelle possible), et comparée à l'heure d'ouverture et à la tolérance réglées dans <a href="#m-parametres">Paramètres</a> pour marquer "En retard" ou "À l'heure". Un technicien déjà pointé pour le jour ne peut pas être pointé une seconde fois (un administrateur peut supprimer un pointage erroné). Le tableau "Retards du mois", en dessous, compte pour chaque technicien ses jours pointés et ses retards sur le mois choisi — le point mensuel à partir duquel décider d'une sanction (via le statut Suspendu/Licencié de sa fiche, ci-dessus). Cliquer une ligne ayant au moins un retard déplie les dates concernées.</p>
+    <p><b>Pointage</b> (troisième onglet) — un agent dédié pointe l'arrivée de chaque technicien actif d'un clic sur "Marquer l'arrivée" : l'heure est enregistrée automatiquement (pas de saisie manuelle possible), et comparée à l'heure d'ouverture et à la tolérance réglées dans <a href="#m-parametres">Paramètres</a> pour marquer "En retard" ou "À l'heure". Un technicien déjà pointé pour le jour ne peut pas être pointé une seconde fois (un administrateur peut supprimer un pointage erroné). Le tableau "Retards du mois", en dessous, compte pour chaque technicien ses jours pointés et ses retards sur le mois choisi — le point mensuel à partir duquel décider d'une sanction (via le statut Suspendu/Licencié de sa fiche, ci-dessus). Cliquer une ligne ayant au moins un retard déplie les dates concernées. Le bouton "Exporter en CSV" télécharge ce tableau (jours pointés, retards et dates de retard) pour le mois sélectionné.</p>
   `},
   { id:"comptage", title:"Comptage de stock", html:`
     <p>Comptage tournant : on saisit la quantité physiquement trouvée pour chaque référence, l'écart avec le stock théorique est mis en évidence. Aucun ajustement n'est appliqué au stock tant que le comptage n'est pas validé, et seul un administrateur peut valider un comptage présentant des écarts.</p>
   `},
   { id:"journal", title:"Journal", html:`
-    <p>Historique de toutes les actions sensibles (créations, modifications, suppressions, sanctions, réinitialisation…) avec la date, l'auteur et son rôle. C'est la première chose à consulter en cas de question sur "qui a fait quoi".</p>
+    <p>Historique de toutes les actions sensibles (créations, modifications, suppressions, sanctions, réinitialisation…) avec la date, l'auteur et son rôle. C'est la première chose à consulter en cas de question sur "qui a fait quoi". Le bouton "Exporter en CSV" télécharge les lignes affichées (respecte la recherche en cours).</p>
   `},
   { id:"clients", title:"Clients", html:`
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution des véhicules :</p>
