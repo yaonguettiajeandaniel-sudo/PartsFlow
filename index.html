@@ -4165,7 +4165,7 @@ VIEWS.clients = async function(view, params){
       (groupes[key] = groupes[key]||[]).push(x);
     });
 
-    let html = '<div class="view-head"><div><p class="lede">Véhicules souhaités pas encore attribués. "Prêts à attribuer" regroupe ceux dont les fonds validés (alloués dans l\'ordre d\'ajout des véhicules d\'un client) couvrent déjà leur coût, classés par type de véhicule puis par ordre d\'atteinte du montant (le premier arrivé, premier servi).</p></div></div>';
+    let html = '<div class="view-head"><div><p class="lede">Véhicules souhaités pas encore attribués. "Prêts à attribuer" regroupe ceux dont les fonds validés (alloués dans l\'ordre d\'ajout des véhicules d\'un client) couvrent déjà leur coût, classés par type de véhicule puis par ordre d\'atteinte du montant (le premier arrivé, premier servi).</p></div><button class="btn" id="exportAttente">Exporter en CSV</button></div>';
 
     if(prets.length){
       html += '<h3 class="section-title">Prêts à attribuer ('+prets.length+')</h3>';
@@ -4208,6 +4208,20 @@ VIEWS.clients = async function(view, params){
       const item = enCours.find(x=>x.demande.id===b.getAttribute("data-valider-manuel"));
       if(item) basculerPretManuel(item, item.c, ()=>setView("clients",{filter:"attente"}));
     }));
+    document.getElementById("exportAttente").addEventListener("click", ()=>{
+      let csv = "Client;Telephone;Vehicule souhaite;Type;Part;Recu;Cout;Statut;Pret depuis\n";
+      items.forEach(x=>{
+        csv += [
+          x.c.nom+" "+(x.c.prenoms||""), x.c.telephone||"",
+          libelleVehicule(x.demande), typeVehiculeCatalogue(x.demande, modeles),
+          "1/"+(x.demande.partDenominateur||1), x.recuAlloue, x.cout,
+          x.pret ? "Pret a attribuer" : "En cours d'accumulation",
+          x.pret ? fmtDate(x.dateAtteint) : "",
+        ].map(v=>String(v||"").replace(/;/g,",")).join(";")+"\n";
+      });
+      downloadFile("clients-en-attente-attribution.csv", csv);
+      toast("Export téléchargé.");
+    });
   }
 
   function drawTypes(){
@@ -5043,7 +5057,7 @@ const MANUEL_SECTIONS = [
       <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En ajoutant un véhicule souhaité sur une fiche client, le choix se fait par menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement selon la part choisie et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant un véhicule souhaité déjà enregistré, s'il correspond à un modèle du catalogue, il est présélectionné automatiquement, et son coût déjà stocké n'est jamais recalculé silencieusement si le prix du catalogue a changé depuis.</li>
       <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client — si le montant reçu n'a jamais été renseigné, "Valider" le demande avant de confirmer (pré-rempli avec le montant envoyé), pour ne jamais laisser un virement "Validé" avec 0 F reçu.</li>
       <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte, ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
-      <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués. Chaque en-tête de groupe précise aussi le nombre de véhicules physiques réellement nécessaires compte tenu des parts (ex. 6 clients à 1/2 = 3 véhicules).</li>
+      <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués. Chaque en-tête de groupe précise aussi le nombre de véhicules physiques réellement nécessaires compte tenu des parts (ex. 6 clients à 1/2 = 3 véhicules). Le bouton "Exporter en CSV" télécharge la liste complète (prêts et en cours), avec le statut de chacun.</li>
       <li><b>Validation manuelle à 90 %</b> — pour un véhicule souhaité "en cours d'accumulation" dont le montant alloué atteint déjà 90 % de son coût, un bouton "Marquer prêt à attribuer" (réservé aux administrateurs, avec confirmation) le fait basculer dans "Prêts à attribuer" sans attendre le solde. Il apparaît alors avec la mention "(validé admin)" pour rester distinct d'un montant réellement atteint à 100 %.</li>
       <li>L'onglet "Par véhicule souhaité" liste <b>tous</b> les véhicules souhaités (attribués ou non, montant atteint ou non), avec un menu déroulant pour filtrer par type et une recherche par nom de client — utile pour repérer qui pourrait partager un même véhicule. Le type affiché est toujours un modèle du catalogue ; un véhicule souhaité en "Autre / personnalisé…" (texte libre, budget non précisé…) apparaît sous "Non déterminé" plutôt que sous son texte brut.</li>
       <li><b>Import CSV</b> (bouton "Importer CSV") — pour faire entrer en masse une liste de clients existante (ex. un tableur d'intake). Les doublons sont repérés par numéro de téléphone ; si le véhicule souhaité contient un prix (ex. "Kaiyi E5 à 16 412 €"), un premier véhicule souhaité est créé automatiquement avec le coût extrait.</li>

@@ -100,3 +100,11 @@ Suite au module Contrôle (voir ci-dessus) : le bandeau "En retard" affichait to
   - **Stock/Catalogue** — export respectant la recherche et le filtre "Sous seuil uniquement" en cours.
   - **Journal** — export respectant la recherche en cours, pour garder une trace hors-ligne de l'audit.
   Volontairement pas ajouté partout (devis/factures/commandes ont déjà leur propre document imprimable ; Clients n'a pas été touché ici) pour ne pas multiplier les boutons sans besoin identifié.
+
+## Bug corrigé : colonne `diagnostic_pieces_suggerees` manquante (migration-24.sql)
+
+`v.diagnosticPiecesSuggerees` (pièces suggérées au diagnostic, voir "Refonte du menu latéral et du module Diagnostic" ci-dessus) a été codé côté JS sans que la migration correspondante ne soit jamais créée — `migration-9.sql` avait ajouté toutes les autres colonnes `diagnostic_*` mais pas celle-ci, oubli passé inaperçu tant que personne n'avait déclenché un chemin qui l'écrit (`openDiagnosticConfirmerForm`, ou `openSortieForm` qui la remet à `null` en sortie de base). Résultat : `PGRST204 — Could not find the 'diagnostic_pieces_suggerees' column of 'vehicules'` dès qu'on essayait de sortir un véhicule de la base. `migration-24.sql` ajoute la colonne (`jsonb`, cohérent avec `controles_vehicule.criteres`).
+
+## Export CSV — Clients "En attente d'attribution"
+
+Ajouté à la suite des autres exports (voir section précédente) : bouton "Exporter en CSV" sur `drawAttente()` (`VIEWS.clients`), qui reprend la liste `items` déjà calculée pour l'affichage (prêts à attribuer + en cours d'accumulation, tous types confondus) avec un statut par ligne.
