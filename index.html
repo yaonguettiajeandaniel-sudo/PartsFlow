@@ -3329,14 +3329,19 @@ VIEWS.techniciens = async function(view){
       const parTech = {};
       pointages.filter(p=>{ const d=new Date(p.date); return d.getFullYear()===y && (d.getMonth()+1)===m; }).forEach(p=>{
         const key = p.technicienId;
-        if(!parTech[key]) parTech[key] = { jours:0, retards:0 };
+        if(!parTech[key]) parTech[key] = { jours:0, retards:0, datesRetard:[] };
         parTech[key].jours++;
-        if(p.enRetard) parTech[key].retards++;
+        if(p.enRetard){ parTech[key].retards++; parTech[key].datesRetard.push(p.date); }
       });
       const rows = Object.entries(parTech).map(([techId, s])=>({ nom: (techniciens.find(x=>x.id===techId)||{}).nom||"?", ...s })).sort((a,b)=>b.retards-a.retards);
-      document.getElementById("retardsTbody").innerHTML = rows.length ? rows.map(r=>
-        '<tr><td>'+esc(r.nom)+'</td><td class="num mono">'+r.jours+'</td><td class="num mono">'+(r.retards>0?'<span class="pill rejete">'+r.retards+'</span>':'0')+"</td></tr>"
+      document.getElementById("retardsTbody").innerHTML = rows.length ? rows.map((r,i)=>
+        '<tr class="'+(r.retards>0?"clickable":"")+'" '+(r.retards>0?'data-toggle-retard="'+i+'"':"")+'><td>'+esc(r.nom)+'</td><td class="num mono">'+r.jours+'</td><td class="num mono">'+(r.retards>0?'<span class="pill rejete">'+r.retards+'</span>':'0')+"</td></tr>"+
+        (r.retards>0 ? '<tr data-detail-retard="'+i+'" hidden><td colspan="3" style="padding:10px 12px;color:var(--ink-muted);">Retards les : '+r.datesRetard.slice().sort().map(d=>fmtDate(d)).join(", ")+"</td></tr>" : "")
       ).join("") : '<tr class="empty-row"><td colspan="3">Aucun pointage ce mois-ci.</td></tr>';
+      document.querySelectorAll("[data-toggle-retard]").forEach(tr=>tr.addEventListener("click", ()=>{
+        const detail = document.querySelector('[data-detail-retard="'+tr.getAttribute("data-toggle-retard")+'"]');
+        if(detail) detail.hidden = !detail.hidden;
+      }));
     }
     drawRetards(monthDefault);
     document.getElementById("pointageMonth").addEventListener("change", e=>drawRetards(e.target.value));
@@ -4024,7 +4029,29 @@ VIEWS["client-detail"] = async function(view, params){
       "</tr>"
     ).join("") : '<tr class="empty-row"><td colspan="6">Aucun virement enregistré.</td></tr>';
     view.querySelectorAll("[data-valider]").forEach(b=>b.addEventListener("click", async ()=>{
-      await state.db.doc("virements/"+b.getAttribute("data-valider")).update({ statut:"valide" });
+      const v = mesVirements.find(x=>x.id===b.getAttribute("data-valider"));
+      let montantRecu = Number(v.montantRecu)||0;
+      /* Si le montant reçu n'a jamais été renseigné (import "en attente" par
+         exemple), valider sans le demander laisserait 0 F reçu malgré le
+         statut "Validé" — on le demande donc explicitement à ce moment-là,
+         plutôt que de le déduire silencieusement. */
+      if(!montantRecu){
+        const body = '<p class="muted" style="margin-top:0;">Le montant reçu n\'est pas renseigné pour ce virement.</p><div class="field"><label>Montant reçu (F CFA)</label><input id="f_recu_valid" type="number" value="'+esc(v.montantEnvoye||0)+'"></div>';
+        montantRecu = await new Promise(resolve=>{
+          const { close } = openModal("Confirmer la réception — "+c.nom, body, {
+            footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="ok">Valider</button>',
+            onMount(back, closeFn){
+              back.querySelector("#cancel").addEventListener("click", ()=>{ closeFn(); resolve(null); });
+              back.querySelector("#ok").addEventListener("click", ()=>{
+                const m = Number(back.querySelector("#f_recu_valid").value)||0;
+                closeFn(); resolve(m);
+              });
+            }
+          });
+        });
+        if(montantRecu==null) return;
+      }
+      await state.db.doc("virements/"+v.id).update({ statut:"valide", montantRecu });
       await logAudit("Virement validé", c.nom, "");
       toast("Virement validé."); setView("client-detail",{id:c.id});
     }));
@@ -4526,7 +4553,7 @@ const MANUEL_SECTIONS = [
     </ul>
     <p><b>Profil d'un technicien :</b> cliquer sur son nom dans la liste ouvre sa fiche complète — les OR dont il est <b>responsable</b> (assignés dès l'envoi du devis à l'atelier ou à l'ouverture d'un OR, voir <a href="#m-atelier">Atelier</a>), en cours et clôturés, ainsi que l'historique de ses interventions facturées. Pas besoin d'un compte de connexion séparé : n'importe qui ayant accès à cet onglet peut consulter "ce qui est arrivé chez untel".</p>
     <p>La <b>synthèse mensuelle</b> (deuxième onglet de cette page) additionne, par technicien, tous les montants de main d'œuvre du mois choisi — ordres de réparation et factures directes confondus — pour préparer la paie. Export CSV disponible.</p>
-    <p><b>Pointage</b> (troisième onglet) — un agent dédié pointe l'arrivée de chaque technicien actif d'un clic sur "Marquer l'arrivée" : l'heure est enregistrée automatiquement (pas de saisie manuelle possible), et comparée à l'heure d'ouverture et à la tolérance réglées dans <a href="#m-parametres">Paramètres</a> pour marquer "En retard" ou "À l'heure". Un technicien déjà pointé pour le jour ne peut pas être pointé une seconde fois (un administrateur peut supprimer un pointage erroné). Le tableau "Retards du mois", en dessous, compte pour chaque technicien ses jours pointés et ses retards sur le mois choisi — le point mensuel à partir duquel décider d'une sanction (via le statut Suspendu/Licencié de sa fiche, ci-dessus).</p>
+    <p><b>Pointage</b> (troisième onglet) — un agent dédié pointe l'arrivée de chaque technicien actif d'un clic sur "Marquer l'arrivée" : l'heure est enregistrée automatiquement (pas de saisie manuelle possible), et comparée à l'heure d'ouverture et à la tolérance réglées dans <a href="#m-parametres">Paramètres</a> pour marquer "En retard" ou "À l'heure". Un technicien déjà pointé pour le jour ne peut pas être pointé une seconde fois (un administrateur peut supprimer un pointage erroné). Le tableau "Retards du mois", en dessous, compte pour chaque technicien ses jours pointés et ses retards sur le mois choisi — le point mensuel à partir duquel décider d'une sanction (via le statut Suspendu/Licencié de sa fiche, ci-dessus). Cliquer une ligne ayant au moins un retard déplie les dates concernées.</p>
   `},
   { id:"comptage", title:"Comptage de stock", html:`
     <p>Comptage tournant : on saisit la quantité physiquement trouvée pour chaque référence, l'écart avec le stock théorique est mis en évidence. Aucun ajustement n'est appliqué au stock tant que le comptage n'est pas validé, et seul un administrateur peut valider un comptage présentant des écarts.</p>
@@ -4541,7 +4568,7 @@ const MANUEL_SECTIONS = [
       <li><b>Véhicules souhaités</b> — un client peut souhaiter plusieurs véhicules, éventuellement de modèles différents (ex. deux Kaiyi E5, ou un Kaiyi E5 et un Suzuki Dzire) : chacun s'ajoute comme une ligne séparée sur sa fiche, avec son propre coût. Ses virements validés remplissent ses véhicules souhaités <b>dans l'ordre où ils ont été ajoutés</b> — le premier ajouté se remplit en premier, le surplus va au suivant, etc.</li>
       <li><b>Véhicule partagé (parts 1/2, 1/3…)</b> — pour un client qui n'achète qu'une part d'un véhicule, choisir "1/2" ou "1/3" dans le champ "Part" en ajoutant son véhicule souhaité : le coût de sa part se calcule automatiquement (prix catalogue ÷ dénominateur). Lors de l'attribution, un même véhicule de la flotte peut être choisi pour plusieurs clients — le menu signale alors qui le partage déjà et demande confirmation avant d'ajouter un partage de plus (avec une alerte si la somme des parts dépasserait un véhicule entier).</li>
       <li><b>Modèles de véhicules</b> (bouton "Modèles de véhicules") — petit catalogue nom + coût, modifiable à tout moment (réservé aux administrateurs pour l'ajout/modification/suppression, visible par tous). En ajoutant un véhicule souhaité sur une fiche client, le choix se fait par menu déroulant basé sur ce catalogue : le type et le coût se remplissent automatiquement selon la part choisie et ne sont plus modifiables séparément (pour éviter que le coût reste incohérent) — pour un cas hors catalogue, choisir "Autre / personnalisé…" qui laisse saisir un type et un coût libres. En modifiant un véhicule souhaité déjà enregistré, s'il correspond à un modèle du catalogue, il est présélectionné automatiquement, et son coût déjà stocké n'est jamais recalculé silencieusement si le prix du catalogue a changé depuis.</li>
-      <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client.</li>
+      <li><b>Virements</b> — chaque virement reçu s'ajoute sur la fiche du client avec le montant envoyé, le montant reçu et un statut : <b>En attente</b> (justificatif reçu, fonds pas encore confirmés), <b>Validé</b> (fonds confirmés) ou <b>Rejeté</b>. Les virements en attente peuvent être validés ou rejetés d'un clic depuis la fiche client — si le montant reçu n'a jamais été renseigné, "Valider" le demande avant de confirmer (pré-rempli avec le montant envoyé), pour ne jamais laisser un virement "Validé" avec 0 F reçu.</li>
       <li><b>Attribution d'un véhicule</b> — sur chaque ligne "véhicule souhaité" non encore attribuée, "Attribuer" permet de choisir un véhicule déjà dans la flotte, ou d'en créer un nouveau directement lié au client (nom et téléphone du client repris comme chauffeur) : le véhicule rejoint alors la flotte suivie dans l'onglet <a href="#m-vehicules">Véhicules</a>. Si la part des fonds déjà allouée à ce véhicule souhaité n'atteint pas encore son coût, l'attribution est bloquée pour un agent — seul un administrateur peut passer outre, avec confirmation explicite (même principe que la rupture de stock côté atelier).</li>
       <li>L'onglet "En attente d'attribution" sépare les véhicules souhaités <b>prêts à attribuer</b> (montant atteint), classés par type de véhicule puis par ordre d'atteinte du montant (premier arrivé, premier servi), de ceux encore <b>en cours d'accumulation</b>. Un même client peut apparaître dans plusieurs groupes s'il souhaite des modèles différents. Une pastille rouge sur l'icône du menu compte les véhicules prêts mais pas encore attribués. Chaque en-tête de groupe précise aussi le nombre de véhicules physiques réellement nécessaires compte tenu des parts (ex. 6 clients à 1/2 = 3 véhicules).</li>
       <li><b>Validation manuelle à 90 %</b> — pour un véhicule souhaité "en cours d'accumulation" dont le montant alloué atteint déjà 90 % de son coût, un bouton "Marquer prêt à attribuer" (réservé aux administrateurs, avec confirmation) le fait basculer dans "Prêts à attribuer" sans attendre le solde. Il apparaît alors avec la mention "(validé admin)" pour rester distinct d'un montant réellement atteint à 100 %.</li>
