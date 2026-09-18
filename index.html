@@ -3622,6 +3622,24 @@ function statutAttributionClient(demandesClient){
 function libelleVehicule(demande){
   return demande.modeleNom + ((demande.partDenominateur||1)>1 ? " (1/"+demande.partDenominateur+")" : "");
 }
+/* Petite icône "voiture" colorée par modèle (couleur dérivée du nom, stable
+   d'un affichage à l'autre, sans nouveau champ à gérer sur le catalogue) —
+   affichée en ligne devant le nom du client dans l'onglet "Tous" ; le nom
+   exact du véhicule souhaité apparaît en infobulle au survol. */
+const PALETTE_MODELES = ["#2563eb","#059669","#d97706","#dc2626","#7c3aed","#0891b2","#db2777","#65a30d","#0d9488","#9333ea"];
+function couleurModele(nom){
+  let h = 0;
+  for(let i=0;i<nom.length;i++) h = (h*31 + nom.charCodeAt(i)) >>> 0;
+  return PALETTE_MODELES[h % PALETTE_MODELES.length];
+}
+function iconeVehiculeSouhaite(demande, modeles){
+  const label = libelleVehicule(demande);
+  const type = typeVehiculeCatalogue(demande, modeles);
+  const couleur = type==="Non déterminé" ? "var(--ink-faint)" : couleurModele(type);
+  return '<span title="'+esc(label)+'" style="display:inline-flex;vertical-align:middle;color:'+couleur+';margin-right:3px;">'+
+    svgIco('<path d="M4 13.5 5 9.6a1.6 1.6 0 0 1 1.55-1.2h6.9A1.6 1.6 0 0 1 15 9.6l1 3.9"/><rect x="2.8" y="13.5" width="14.4" height="2.6" rx="1.2"/><circle cx="6.3" cy="16.6" r="1.3"/><circle cx="13.7" cy="16.6" r="1.3"/>')+
+  "</span>";
+}
 /* Pour classer/regrouper par "type de véhicule" (Prêts à attribuer, Par
    véhicule souhaité), on n'accepte que les modèles réellement présents dans
    le catalogue — un texte libre ("Budget en dessous de 10 000 €") ou un
@@ -3658,19 +3676,18 @@ VIEWS.clients = async function(view, params){
       '<div class="view-head"><div><p class="lede">Clients suivis via les virements JET_S — envoi des justificatifs, confirmation de réception des fonds, puis attribution d\'un ou plusieurs véhicules.</p></div>'+
         '<div class="row-actions"><button class="btn" id="modelesVeh">Modèles de véhicules</button><button class="btn" id="importVirements">Importer virements (CSV)</button><button class="btn" id="importCsv">Importer CSV</button><button class="btn primary" id="newClient">+ Nouveau client</button></div></div>'+
       '<div class="toolbar"><input type="search" id="cliSearch" placeholder="Rechercher par nom, téléphone…"></div>'+
-      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th><th>Véhicules souhaités</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
+      '<div class="table-wrap"><table class="grid"><thead><tr><th>Client</th><th>Téléphone</th></tr></thead><tbody id="cliTbody"></tbody></table></div>';
     function draw(filter){
       const f = (filter||"").toLowerCase();
       const rows = clients.filter(c=>!f || [c.nom,c.prenoms,c.telephone].some(x=>(x||"").toLowerCase().includes(f)));
       document.getElementById("cliTbody").innerHTML = rows.length ? rows.map(c=>{
         const demandesClient = demandes.filter(d=>d.clientId===c.id);
-        const noms = demandesClient.map(libelleVehicule).join(", ");
+        const icones = demandesClient.map(d=>iconeVehiculeSouhaite(d, modeles)).join("");
         return '<tr class="clickable" data-id="'+c.id+'">'+
-          '<td>'+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
+          '<td>'+icones+esc(c.nom)+' '+esc(c.prenoms||"")+'</td>'+
           '<td>'+esc(c.telephone||"—")+'</td>'+
-          '<td>'+esc(noms||"—")+'</td>'+
         "</tr>";
-      }).join("") : '<tr class="empty-row"><td colspan="3">Aucun client ne correspond.</td></tr>';
+      }).join("") : '<tr class="empty-row"><td colspan="2">Aucun client ne correspond.</td></tr>';
       document.querySelectorAll("#cliTbody [data-id]").forEach(tr=>tr.addEventListener("click", ()=>setView("client-detail",{id:tr.getAttribute("data-id")})));
     }
     draw("");
@@ -4559,7 +4576,7 @@ const MANUEL_SECTIONS = [
   { id:"clients", title:"Clients", html:`
     <p>Second flux d'activité, distinct de l'atelier : vente/financement de véhicules à des clients par virement bancaire ("virements JET_S"). Le suivi va de l'envoi des justificatifs à l'attribution des véhicules :</p>
     <ul>
-      <li><b>Onglet "Tous"</b> — simple annuaire des clients (nom, téléphone, véhicules souhaités), sans progression ni statut : cliquer un client ouvre sa fiche, où se trouve tout le suivi (virements, attribution). Le suivi financier et l'attribution se consultent dans les onglets "En attente d'attribution" et "Par véhicule souhaité", ou directement sur la fiche du client.</li>
+      <li><b>Onglet "Tous"</b> — simple annuaire des clients (nom, téléphone), sans progression ni statut : cliquer un client ouvre sa fiche, où se trouve tout le suivi (virements, attribution). Une petite icône voiture devant le nom de chaque client signale ses véhicules souhaités — une icône par véhicule, colorée selon le modèle (le nom exact apparaît en survolant l'icône). Le suivi financier et l'attribution se consultent dans les onglets "En attente d'attribution" et "Par véhicule souhaité", ou directement sur la fiche du client.</li>
       <li><b>Fiche client</b> — coordonnées, offre actuelle et migration souhaitée. Une barre d'étapes en haut de la fiche (justificatif envoyé → fonds confirmés → montant(s) atteint(s) → véhicule(s) attribué(s)) montre en un coup d'œil où en est le dossier.</li>
       <li><b>Véhicules souhaités</b> — un client peut souhaiter plusieurs véhicules, éventuellement de modèles différents (ex. deux Kaiyi E5, ou un Kaiyi E5 et un Suzuki Dzire) : chacun s'ajoute comme une ligne séparée sur sa fiche, avec son propre coût. Ses virements validés remplissent ses véhicules souhaités <b>dans l'ordre où ils ont été ajoutés</b> — le premier ajouté se remplit en premier, le surplus va au suivant, etc.</li>
       <li><b>Véhicule partagé (parts 1/2, 1/3…)</b> — pour un client qui n'achète qu'une part d'un véhicule, choisir "1/2" ou "1/3" dans le champ "Part" en ajoutant son véhicule souhaité : le coût de sa part se calcule automatiquement (prix catalogue ÷ dénominateur). Lors de l'attribution, un même véhicule de la flotte peut être choisi pour plusieurs clients — le menu signale alors qui le partage déjà et demande confirmation avant d'ajouter un partage de plus (avec une alerte si la somme des parts dépasserait un véhicule entier).</li>
