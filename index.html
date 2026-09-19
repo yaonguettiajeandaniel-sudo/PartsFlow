@@ -1969,13 +1969,73 @@ function openReceptionForm(vehicules){
   });
 }
 
+/* ---- Éditeur de pièces suggérées au diagnostic ---------------------------
+   Même présentation qu'une ligne de devis/facture (table + "+ Ajouter une
+   ligne", pièce choisie dans le catalogue via mountSearchableSelect) mais
+   sans aucune colonne de prix : à ce stade on suggère ce qui sera
+   probablement nécessaire, on ne chiffre rien. Les pannes qui ne
+   nécessitent pas de pièce précise restent décrites dans le champ de texte
+   libre à côté (elles ne peuvent pas préremplir une ligne de devis, qui
+   exige toujours soit une pièce du catalogue, soit de la main d'œuvre
+   facturée). Réutilisé par openDiagnosticAssignerForm (diagnostic confirmé
+   dès l'assignation) et openDiagnosticConfirmerForm (étape séparée). */
+function renderPiecesSuggereesEditor(container, pieces, articles){
+  function redraw(){
+    const rows = pieces.map((p,i)=>
+      '<tr data-i="'+i+'">'+
+        '<td style="min-width:220px;"><div class="ssel-slot" data-slot="art" data-i="'+i+'"></div></td>'+
+        '<td style="width:80px;"><input type="number" min="1" step="1" data-f="quantite" data-i="'+i+'" value="'+(p.quantite||1)+'"></td>'+
+        '<td style="width:34px;"><button type="button" class="btn ghost small" data-remove="'+i+'" title="Retirer">&times;</button></td>'+
+      "</tr>"
+    ).join("");
+    container.innerHTML =
+      '<table class="lines-table"><thead><tr><th>Pièce suspectée</th><th>Qté</th><th></th></tr></thead><tbody>'+
+        (rows || '<tr><td colspan="3" class="faint" style="padding:10px 6px;">Aucune pièce ajoutée — les pannes sans pièce précise se décrivent en texte libre ci-dessus.</td></tr>')+
+      "</tbody></table>"+
+      '<button type="button" class="btn small" id="addPieceLine">+ Ajouter une pièce</button>';
+
+    container.querySelectorAll('[data-slot="art"]').forEach(slot=>{
+      const i = Number(slot.getAttribute("data-i"));
+      mountSearchableSelect(slot, {
+        items: articles, getId:a=>a.id, getLabel:a=>a.reference+" — "+a.designation,
+        value: pieces[i].articleId, placeholder:"Rechercher une pièce du catalogue…",
+        onChange:(id)=>{
+          const art = articles.find(a=>a.id===id);
+          pieces[i].articleId = id||null;
+          pieces[i].reference = art?art.reference:null;
+          pieces[i].designation = art?art.designation:"";
+        }
+      });
+    });
+    container.querySelectorAll('[data-f="quantite"]').forEach(inp=>{
+      inp.addEventListener("input", (e)=>{
+        pieces[Number(e.target.getAttribute("data-i"))].quantite = Number(e.target.value)||1;
+      });
+    });
+    container.querySelectorAll("[data-remove]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{ pieces.splice(Number(btn.getAttribute("data-remove")),1); redraw(); });
+    });
+    container.querySelector("#addPieceLine").addEventListener("click", ()=>{
+      pieces.push({ articleId:null, reference:null, designation:"", quantite:1 });
+      redraw();
+    });
+  }
+  redraw();
+  return { getItems: ()=> pieces.filter(p=>p.articleId) };
+}
+
 function openDiagnosticAssignerForm(v, techniciens){
   const body =
     '<div class="field"><label>Technicien assigné pour le diagnostic</label><div id="techSlot"></div></div>'+
-    '<div class="field"><label>Diagnostic confirmé (si déjà fait)</label><textarea id="f_diag" rows="3" placeholder="Laissez vide si le mécanicien doit encore examiner le véhicule"></textarea></div>';
+    '<div class="field"><label>Diagnostic confirmé (si déjà fait) — panne(s) sans pièce précise, en texte libre</label><textarea id="f_diag" rows="3" placeholder="Laissez vide si le mécanicien doit encore examiner le véhicule"></textarea></div>'+
+    '<div class="field"><label>Pièces suspectées (facultatif — préremplira le devis)</label><div id="piecesBox"></div></div>';
   const { close } = openModal("Diagnostic — "+v.immatriculation, body, {
+    wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Enregistrer</button>',
-    onMount(back, close){
+    async onMount(back, close){
+      const articles = await getAll("articles");
+      const pieces = (v.diagnosticPiecesSuggerees||[]).slice();
+      const piecesEditor = renderPiecesSuggereesEditor(back.querySelector("#piecesBox"), pieces, articles);
       const techPicker = mountSearchableSelect(back.querySelector("#techSlot"), {
         items: techniciens, getId:t=>t.id, getLabel:technicienLabel, placeholder:"Rechercher un technicien…"
       });
@@ -1984,13 +2044,15 @@ function openDiagnosticAssignerForm(v, techniciens){
         const tech = techniciens.find(t=>t.id===techPicker.getValue());
         if(!tech){ toast("Choisissez un technicien.", "danger"); return; }
         const diagnostic = back.querySelector("#f_diag").value.trim();
+        const piecesRetenues = piecesEditor.getItems();
         const data = {
           diagnosticTechnicienId: tech.id, diagnosticTechnicienNom: tech.nom, diagnosticAssigneDate: todayIso(),
         };
-        if(diagnostic){
+        if(diagnostic || piecesRetenues.length){
           data.etapePriseEnCharge = "diagnostic_confirme";
           data.diagnosticConfirme = diagnostic;
           data.diagnosticConfirmeDate = todayIso();
+          data.diagnosticPiecesSuggerees = piecesRetenues;
         } else {
           data.etapePriseEnCharge = "diagnostic_en_cours";
         }
@@ -2004,49 +2066,25 @@ function openDiagnosticAssignerForm(v, techniciens){
 
 function openDiagnosticConfirmerForm(v){
   const body =
-    '<div class="field"><label>Diagnostic confirmé</label><textarea id="f_diag" rows="4" placeholder="Réparations à effectuer, confirmées après examen du véhicule">'+esc(v.diagnosticConfirme||"")+'</textarea></div>'+
-    '<div class="field"><label>Pièces suspectées (facultatif — préremplira le devis)</label>'+
-      '<div class="field-row" style="grid-template-columns:2fr 1fr auto;align-items:end;">'+
-        '<div class="field" style="margin-bottom:0;"><div id="artSlot"></div></div>'+
-        '<div class="field" style="margin-bottom:0;"><input id="f_qte" type="number" value="1" min="1" placeholder="Qté"></div>'+
-        '<button type="button" class="btn small" id="addPieceDiag">+ Ajouter</button>'+
-      "</div>"+
-      '<div id="piecesListe" style="margin-top:8px;"></div>'+
-    "</div>";
+    '<div class="field"><label>Diagnostic confirmé — panne(s) sans pièce précise, en texte libre</label><textarea id="f_diag" rows="4" placeholder="Réparations à effectuer, confirmées après examen du véhicule">'+esc(v.diagnosticConfirme||"")+'</textarea></div>'+
+    '<div class="field"><label>Pièces suspectées (facultatif — préremplira le devis)</label><div id="piecesBox"></div></div>';
   const { close } = openModal("Confirmer le diagnostic — "+v.immatriculation, body, {
     wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Annuler</button><button class="btn primary" id="save">Confirmer</button>',
     async onMount(back, close){
       const articles = await getAll("articles");
-      let pieces = (v.diagnosticPiecesSuggerees||[]).slice();
-      const artPicker = mountSearchableSelect(back.querySelector("#artSlot"), {
-        items: articles, getId:a=>a.id, getLabel:a=>a.reference+" — "+a.designation, placeholder:"Rechercher une pièce du catalogue…"
-      });
-      function drawPieces(){
-        back.querySelector("#piecesListe").innerHTML = pieces.length
-          ? '<ul style="margin:0;padding-left:18px;">'+pieces.map((p,i)=>
-              '<li>'+esc(p.reference)+" — "+esc(p.designation)+" (x"+p.quantite+') <button type="button" class="btn small ghost" data-rm="'+i+'" style="padding:1px 6px;">Retirer</button></li>'
-            ).join("")+"</ul>"
-          : '<p class="faint" style="margin:0;">Aucune pièce ajoutée.</p>';
-        back.querySelectorAll("[data-rm]").forEach(b=>b.addEventListener("click", ()=>{ pieces.splice(Number(b.getAttribute("data-rm")),1); drawPieces(); }));
-      }
-      drawPieces();
-      back.querySelector("#addPieceDiag").addEventListener("click", ()=>{
-        const art = articles.find(a=>a.id===artPicker.getValue());
-        if(!art){ toast("Choisissez une pièce.", "danger"); return; }
-        const quantite = Number(back.querySelector("#f_qte").value)||1;
-        pieces.push({ articleId:art.id, reference:art.reference, designation:art.designation, quantite });
-        drawPieces();
-      });
+      const pieces = (v.diagnosticPiecesSuggerees||[]).slice();
+      const piecesEditor = renderPiecesSuggereesEditor(back.querySelector("#piecesBox"), pieces, articles);
       back.querySelector("#cancel").addEventListener("click", close);
       back.querySelector("#save").addEventListener("click", async ()=>{
         const diagnostic = back.querySelector("#f_diag").value.trim();
         if(!diagnostic){ toast("Décrivez le diagnostic.", "danger"); return; }
+        const piecesRetenues = piecesEditor.getItems();
         await state.db.doc("vehicules/"+v.id).update({
           etapePriseEnCharge: "diagnostic_confirme", diagnosticConfirme: diagnostic, diagnosticConfirmeDate: todayIso(),
-          diagnosticPiecesSuggerees: pieces,
+          diagnosticPiecesSuggerees: piecesRetenues,
         });
-        await logAudit("Diagnostic confirmé", v.immatriculation, pieces.length ? pieces.length+" pièce(s) suggérée(s)" : "");
+        await logAudit("Diagnostic confirmé", v.immatriculation, piecesRetenues.length ? piecesRetenues.length+" pièce(s) suggérée(s)" : "");
         close(); toast("Diagnostic confirmé."); renderView();
       });
     }
@@ -4980,6 +5018,7 @@ const MANUEL_SECTIONS = [
       <li><b>Diagnostic confirmé</b> — le mécanicien a précisé les réparations à effectuer ; un bouton "Créer le devis" ouvre directement le formulaire de devis pour ce véhicule.</li>
     </ol>
     <p>Si un mécanicien est disponible immédiatement, les étapes 2 et 3 peuvent se faire en une fois (le formulaire d'assignation accepte de saisir le diagnostic tout de suite).</p>
+    <p>Confirmer un diagnostic combine deux façons de décrire la panne : un champ <b>texte libre</b> pour ce qui ne se rattache pas à une pièce précise, et une table de <b>pièces suspectées</b> — même présentation qu'une ligne de devis (recherche dans le catalogue, quantité, une ligne par pièce) mais sans aucun prix, puisqu'il ne s'agit à ce stade que d'une suggestion. Le bouton "Créer le devis" reprend automatiquement ces pièces comme lignes préremplies.</p>
     <p>Depuis la fiche d'un véhicule "Inactif", le bouton <b>Commande urgente</b> ouvre directement une commande fournisseur pré-remplie avec le motif et le constat, à compléter avec les références de pièces nécessaires.</p>
     <p><b>Import CSV :</b> le bouton "Importer CSV" propose un modèle avec les colonnes attendues (immatriculation, marque, modèle, groupe, type, contrat, chauffeur, téléphone, statut). Les en-têtes sont reconnus même avec des variantes d'accents ou de casse.</p>
     <p><b>+ Nouveau véhicule</b> ouvre un formulaire volontairement différent de "Modifier" : juste l'identité du véhicule (immatriculation, marque, modèle, groupe, type, contrat, chauffeur) — un véhicule qui rejoint la flotte n'est pas forcément en panne, il est donc toujours créé "Actif", sans les champs de statut/immobilisation/sinistre qui n'ont de sens que pour un véhicule déjà existant.</p>
