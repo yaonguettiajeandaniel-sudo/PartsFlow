@@ -2529,32 +2529,51 @@ async function openCommandeDetail(id){
    la pièce (SKU) + n° de commande (les 4 derniers chiffres, ex. "0001") +
    position de cette unité parmi celles reçues de la même référence sur cette
    commande, ex. "REF-PLQ-002-0001-1", "-2", "-3"… — déterministe, jamais
-   stocké, recalculé à chaque ouverture à partir de la commande. */
+   stocké, recalculé à chaque ouverture à partir de la commande. Le compteur
+   est tenu par référence sur TOUTE la commande (pas remis à zéro à chaque
+   ligne) : si la même référence apparaît sur deux lignes distinctes, la
+   numérotation continue au lieu de repartir de 1, pour ne jamais donner le
+   même code à deux unités physiques différentes. */
 function genererCodesBarresCommande(c){
   const seqMatch = (c.numero||"").match(/(\d{4})$/);
   const seq = seqMatch ? seqMatch[1] : (c.numero||"CMD");
   const labels = [];
+  const compteurParRef = {};
   (c.lignes||[]).forEach(l=>{
     const n = Math.floor(Number(l.qteRecue)||0);
-    for(let i=1;i<=n;i++){
-      labels.push({ code: (l.reference||"REF")+"-"+seq+"-"+i, reference:l.reference, designation:l.designation });
+    const ref = l.reference||"REF";
+    for(let i=0;i<n;i++){
+      compteurParRef[ref] = (compteurParRef[ref]||0) + 1;
+      labels.push({ code: ref+"-"+seq+"-"+compteurParRef[ref], reference:ref, designation:l.designation });
     }
   });
   return labels;
 }
+/* Grille des étiquettes : chaque <svg> est forcé à width:100%/height:auto
+   pour ne jamais dépasser sa case (le SVG est vectoriel, donc ce redimen-
+   sionnement ne perd aucune netteté). Sans ça, JsBarcode dessine le
+   code-barres à sa largeur naturelle — souvent bien plus large que la
+   colonne pour un code de 14-15 caractères — et il déborde visuellement
+   sur l'étiquette voisine. Bordure pointillée + marge généreuse entre les
+   cases pour donner un vrai repère de découpe, et zone de silence
+   (margin) du code-barres remontée à 10 pour rester lisible même si la
+   découpe n'est pas parfaitement centrée. */
 function openCodesBarresCommande(c){
   const labels = genererCodesBarresCommande(c);
   if(!labels.length){ toast("Aucun article reçu sur cette commande pour le moment.", "danger"); return; }
-  const body =
-    '<p class="muted" style="margin-top:0;">Un code-barres par unité reçue — '+labels.length+' au total.</p>'+
-    '<div id="barcodeGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;">'+
+  function grille(prefix, borderColor){
+    return '<div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:18px;">'+
       labels.map((l,i)=>
-        '<div style="border:1px solid var(--line); border-radius:var(--radius); padding:8px; text-align:center;">'+
-          '<svg id="bc'+i+'"></svg>'+
-          '<div class="faint" style="font-size:.72rem; margin-top:2px;">'+esc(l.designation||"")+'</div>'+
+        '<div style="border:1px dashed '+borderColor+'; border-radius:var(--radius); padding:14px 10px; text-align:center; overflow:hidden;">'+
+          '<svg id="'+prefix+i+'" style="width:100%; height:auto; display:block;"></svg>'+
+          '<div style="font-size:11px; margin-top:4px; word-break:break-word;">'+esc(l.designation||"")+'</div>'+
         "</div>"
       ).join("")+
     "</div>";
+  }
+  const body =
+    '<p class="muted" style="margin-top:0;">Un code-barres par unité reçue — '+labels.length+' au total.</p>'+
+    '<div id="barcodeGrid">'+grille("bc","var(--line)")+"</div>";
   openModal("Codes-barres — "+c.numero, body, {
     wide:true,
     footHtml: '<button class="btn ghost" id="cancel">Fermer</button><button class="btn primary" id="printBc">Imprimer</button>',
@@ -2562,7 +2581,7 @@ function openCodesBarresCommande(c){
       back.querySelector("#cancel").addEventListener("click", close);
       function dessiner(root, prefix){
         labels.forEach((l,i)=>{
-          try{ JsBarcode(root.querySelector("#"+prefix+i), l.code, { format:"CODE128", width:1.6, height:42, fontSize:11, margin:4 }); }
+          try{ JsBarcode(root.querySelector("#"+prefix+i), l.code, { format:"CODE128", width:1.3, height:46, fontSize:11, margin:10 }); }
           catch(e){ /* référence vide ou caractère non encodable — la vignette reste vide plutôt que de bloquer les autres */ }
         });
       }
@@ -2572,15 +2591,7 @@ function openCodesBarresCommande(c){
         // printDocument) plutôt que window.print() direct sur la modale,
         // pour ne pas imprimer aussi le reste de l'interface autour.
         const printArea = document.getElementById("printArea");
-        printArea.innerHTML =
-          '<div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px;">'+
-            labels.map((l,i)=>
-              '<div style="border:1px solid #ccc; border-radius:6px; padding:8px; text-align:center;">'+
-                '<svg id="pbc'+i+'"></svg>'+
-                '<div style="font-size:11px; margin-top:2px;">'+esc(l.designation||"")+'</div>'+
-              "</div>"
-            ).join("")+
-          "</div>";
+        printArea.innerHTML = grille("pbc","#999");
         dessiner(printArea, "pbc");
         setTimeout(()=> window.print(), 50);
       });

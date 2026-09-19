@@ -108,3 +108,10 @@ Suite au module Contrôle (voir ci-dessus) : le bandeau "En retard" affichait to
 ## Export CSV — Clients "En attente d'attribution"
 
 Ajouté à la suite des autres exports (voir section précédente) : bouton "Exporter en CSV" sur `drawAttente()` (`VIEWS.clients`), qui reprend la liste `items` déjà calculée pour l'affichage (prêts à attribuer + en cours d'accumulation, tous types confondus) avec un statut par ligne.
+
+## Bugs corrigés : codes-barres dupliqués et débordement visuel
+
+Deux problèmes remontés par l'utilisateur sur une commande avec plusieurs lignes portant la même référence (`PCE-001` sur 2 lignes séparées, 13 unités reçues au total) :
+
+- **Codes dupliqués (bug réel, pas seulement visuel)** : `genererCodesBarresCommande` comptait les unités **par ligne**, pas par référence sur l'ensemble de la commande — la 2ᵉ ligne d'une même référence repartait de `-1`, donnant le même code à deux unités physiques différentes (`PCE-001-0001-1` apparaissait deux fois). Corrigé avec un compteur `compteurParRef` tenu sur toute la commande, incrémenté à chaque unité quelle que soit sa ligne d'origine.
+- **Débordement visuel** : les `<svg>` de JsBarcode n'avaient pas de largeur contrainte en CSS — pour un code de 14-15 caractères en CODE128, la largeur naturelle dépassait largement la colonne de la grille (190px), et le code-barres débordait visuellement sur l'étiquette voisine (ce que l'utilisateur décrivait comme "les codes se mélangent"). Corrigé en forçant `width:100%; height:auto` sur chaque `<svg>` (aucune perte de netteté, c'est du vectoriel) ; grille élargie (230px min, gap 18px), zone de silence du code-barres remontée (`margin:10`) et bordure en pointillés pour servir de repère de découpe.
